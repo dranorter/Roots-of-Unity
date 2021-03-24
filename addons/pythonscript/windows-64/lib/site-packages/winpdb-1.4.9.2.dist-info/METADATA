@@ -1,0 +1,42 @@
+Metadata-Version: 2.1
+Name: winpdb
+Version: 1.4.9.2
+Summary: A backward compatibility package to the official winpdb-reborn, a platform independent GPL Python debugger.
+Home-page: https://github.com/bluebird75/winpdb
+Author: Philippe Fremy, Nir Aides
+Author-email: phil.fremy@free.fr
+License: GNU GPL
+Project-URL: Source, https://github.com/bluebird75/winpdb/
+Project-URL: Tracker, https://github.com/bluebird75/winpdb/issues
+Keywords: debugger
+Platform: UNKNOWN
+Classifier: Development Status :: 3 - Alpha
+Classifier: Environment :: Console
+Classifier: Environment :: Win32 (MS Windows)
+Classifier: Environment :: MacOS X
+Classifier: Environment :: X11 Applications
+Classifier: License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)
+Classifier: Operating System :: MacOS
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Operating System :: POSIX
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Topic :: Software Development :: Debuggers
+Classifier: Topic :: Utilities
+Classifier: Topic :: Education
+Classifier: Topic :: Scientific/Engineering
+Classifier: Topic :: Software Development :: Debuggers
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Education
+Classifier: Intended Audience :: Science/Research
+Requires-Python: >=3.5
+Description-Content-Type: text/markdown
+Requires-Dist: wxpython (>=4)
+Requires-Dist: winpdb-reborn (>=2.0.0.1)
+
+A backward compatibility package to the official winpdb-reborn, a platform independent GPL Python debugger.
+
+The debugger `winpdb` is now developed under the package name [winpdb-reborn](https://pypi.org/project/winpdb-reborn/)
+
+This package exists just for backward compatibility reasons.
+
+

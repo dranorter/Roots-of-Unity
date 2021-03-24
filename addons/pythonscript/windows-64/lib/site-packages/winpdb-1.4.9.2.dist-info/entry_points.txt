@@ -1,0 +1,3 @@
+[console_scripts]
+winpdb_legacy = winpdb_legacy:main
+

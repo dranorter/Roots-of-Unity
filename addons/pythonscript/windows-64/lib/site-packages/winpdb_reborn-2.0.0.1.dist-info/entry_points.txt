@@ -1,0 +1,6 @@
+[console_scripts]
+rpdb2 = rpdb2:run_rpdb2
+
+[gui_scripts]
+winpdb = winpdb:run_winpdb
+
