@@ -1,3 +1,4 @@
+from godot import Engine
 from godot import *
 
 #import os
@@ -8,8 +9,20 @@ class debugging(Node):
 	broken_once = False
 
 	def breakpoint():
-		import rpdb2
-		rpdb2.start_embedded_debugger('notaflex',depth=1)
+		if Engine.editor_hint():
+			print("Skipping breakpoint in editor mode")
+		else:
+			print("Awaiting debugger connection")
+			import rpdb2
+			rpdb2.start_embedded_debugger('notaflex',depth=1)
+	
+	def editor_breakpoint():
+		if not Engine.editor_hint():
+			pass
+		else:
+			print("Awaiting debugger connection")
+			import rpdb2
+			rpdb2.start_embedded_debugger('notaflex',depth=1)
 
 	def break_once():
 		global broken_once
