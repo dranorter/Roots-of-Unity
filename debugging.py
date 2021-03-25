@@ -9,7 +9,7 @@ class debugging(Node):
 	broken_once = False
 
 	def breakpoint():
-		if Engine.editor_hint():
+		if Engine.editor_hint:
 			print("Skipping breakpoint in editor mode")
 		else:
 			print("Awaiting debugger connection")
@@ -17,7 +17,7 @@ class debugging(Node):
 			rpdb2.start_embedded_debugger('notaflex',depth=1)
 	
 	def editor_breakpoint():
-		if not Engine.editor_hint():
+		if not Engine.editor_hint:
 			pass
 		else:
 			print("Awaiting debugger connection")

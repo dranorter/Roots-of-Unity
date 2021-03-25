@@ -80,6 +80,8 @@ class numpylattice(MeshInstance):
 		# 3-faces.
 		# For debugging:
 		intersections = []
+		faces = []
+		deflation_faces = []
 		for axes in ch3:
 			# Project axes with 1s into parallel space
 			#facevectors = parallelspace.T[np.nonzero(axes)[0]].T
@@ -149,7 +151,10 @@ class numpylattice(MeshInstance):
 				included = included + np.pad(corners[fv[0]:,fv[1]:,
 							fv[2]:,fv[3]:,fv[4]:,fv[5]:],((0,fv[0]),(0,fv[1]),(0,fv[2]),(0,fv[3]),(0,fv[4]),(0,fv[5])),
 							'constant',constant_values=(False))
-			
+			for face in (embedding_space[corners] + np.array(1-np.array(axes))/2):
+				faces.append(face)
+			for face in (embedding_space[deflation_corners1] + np.array(1-np.array(axes))*(3.0/2)):
+				deflation_faces.append(face)
 		
 		
 		# Need to know which lines are included, not which points; so we shift
@@ -167,23 +172,35 @@ class numpylattice(MeshInstance):
 		
 		all_lines = [lines0,lines1,lines2,lines3,lines4,lines5]
 		
-		# With deflated array, not sure how to get good lines
-		# So, just demarcating everything
-		deflated_lines = embedding_space[np.nonzero(deflation_included)]
+		# Deflated lines are of distance 3 apart, having a distance of 1 in five
+		# of their coordinates and a distance of 2 in one of them.
+		deflated_lines = [[],[],[],[],[],[]]
+		for i in embedding_space[deflation_included]:
+			for j in embedding_space[deflation_included]:
+				#print(np.linalg.norm(i - j))
+				#print(np.sum(np.abs(i - j)))
+				#print(np.where(i - j == 2)[0].shape == (1,))
+				if np.linalg.norm(i - j) == 3:
+					if np.sum(np.abs(i - j)) == 7:
+						if np.where(i - j == 2)[0].shape == (1,):
+							deflated_lines[np.where(i - j == 2)[0][0]].append(j)
+				
+		#Want to identify the chunks
+		
+		
 		
 		# Choose a chunk near origin
-		#print(included[5,5,5,5,5,5])
-		#print(included[6,5,5,5,5,5])
-		#print(included[5,6,5,5,5,5])
-		#print(included[5,5,6,5,5,5])
-		#print(included[6,6,6,5,5,5])
-		# Well, I choose the one from [5,5,5,5,5,5] to [6,6,6,5,5,5]
-		chosen_center = np.array([-0.5,-0.5,-1.5,5,5,5])
-		chosen_origin = np.array([-1,-1,-1,5,5,5])
-		chosen_axes = np.array([0,1,0,1,1,0])
-		chosen_axis1 = np.array([1,0,0,0,0,0])
-		chosen_axis2 = np.array([0,1,0,0,0,0])
-		chosen_axis3 = np.array([0,0,1,0,0,0])
+		deflation_faces = np.array(deflation_faces)
+		chosen_center = deflation_faces[
+			np.where(np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1)
+			== np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1).min())[0][0]]
+		chosen_origin = np.floor(chosen_center)
+		chosen_axes = np.array((chosen_center - chosen_origin)*2)
+		chosen_origin = chosen_origin - chosen_axes
+		chosen_axis1 = np.array(np.eye(6)[np.nonzero(chosen_axes)[0][0]])
+		chosen_axis2 = np.array(np.eye(6)[np.nonzero(chosen_axes)[0][1]])
+		chosen_axis3 = np.array(np.eye(6)[np.nonzero(chosen_axes)[0][2]])
+		print(chosen_center)
 		
 		multiplier = 4
 		array_mesh = ArrayMesh()
@@ -196,9 +213,9 @@ class numpylattice(MeshInstance):
 #		for dim in range(6):
 #			basis_element = np.zeros(6)
 #			basis_element[dim] = 1
-#			offset = basis_element.dot(worldplane.transpose())#*(-phi*phi*phi)
+#			offset = basis_element.dot(worldplane.T)#*(-phi*phi*phi)
 #			for line in all_lines[dim]:
-#				point1 = line.dot(worldplane.transpose())
+#				point1 = line.dot(worldplane.T)
 #				point2 = point1 + offset
 #				point1 *= multiplier*(-phi*phi*phi)
 #				point2 *= multiplier*(-phi*phi*phi)
@@ -218,19 +235,19 @@ class numpylattice(MeshInstance):
 		for dim in range(6):
 			basis_element = np.zeros(6)
 			basis_element[dim] = 1
-			offset = basis_element.dot(worldplane.transpose())
+			offset = basis_element.dot(worldplane.T)
 			for line in all_lines[dim]:
 				# Test if inside chosen chunk
-				point1 = line.dot(worldplane.transpose())
+				point1 = line.dot(worldplane.T)
 				point2 = point1 + offset
 				point1 *= multiplier
 				point2 *= multiplier
 				#np.linalg.norm(point1 - np.array([-27.41640786 -16.94427191  -0.])) < 20 or 
 				#          np.linalg.norm(point2 - np.array([-27.41640786 -16.94427191  -0.])) < 20:
 				#True:#5*multiplier < point1[1] < 10*multiplier:
-				if np.all(np.abs((np.array([point1,point2])/(multiplier*np.linalg.norm(worldplane[1])))
+				if np.all(np.abs((np.array([point1,point2]) - (chosen_center+chosen_axes*.67).dot(worldplane.T)*multiplier)
 								.dot(np.linalg.inv(normalworld.T[np.nonzero(chosen_axes)[0]]
-								*(-phi*phi*phi))) - 0.5) < .501):
+								*(phi*phi*phi*np.linalg.norm(worldplane[1])) ))) < 2.351):
 					st.add_vertex(Vector3(point1[0],point1[1],point1[2]))
 					st.add_vertex(Vector3(point2[0],point2[1],point2[2]))
 		
@@ -241,12 +258,11 @@ class numpylattice(MeshInstance):
 		st.add_color(Color(1,0,1))
 		for dim in range(6):
 			basis_element = np.zeros(6)
-			basis_element[dim] = 0.3
-			offset = basis_element.dot(worldplane.transpose())#*(-phi*phi*phi)
-			for line in deflated_lines:
-				point1 = line.dot(worldplane.transpose())
+			basis_element[dim] = phi*phi*phi
+			offset = basis_element.dot(worldplane.T)#*(-phi*phi*phi)
+			for line in deflated_lines[dim]:
+				point1 = line.dot(worldplane.T)
 				point2 = point1 + offset
-				point1 = point1 - offset
 				point1 *= multiplier#*(-phi*phi*phi)
 				point2 *= multiplier#*(-phi*phi*phi)
 				#if True:#np.linalg.norm(point1 - np.array([-27.41640786 -16.94427191  -0.])) < 20 or 
@@ -259,6 +275,8 @@ class numpylattice(MeshInstance):
 		st.commit(self.mesh)
 		
 		self.mesh.surface_set_material(1,COLOR)
+		
+		debugging.breakpoint()
 		
 		latticepoints = embedding_space[included]
 #		st = SurfaceTool()
