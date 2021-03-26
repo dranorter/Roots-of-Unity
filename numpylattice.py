@@ -23,6 +23,7 @@ class numpylattice(MeshInstance):
 		# actually check (so, inside the range of the embedding_space).
 		#a = np.array([5.1+phi/8,5.2+phi/8,5.3,5.4,5.5,5.6])
 		a = np.array([0.1201,0.61102,0.1003,0.60904,0.0805,0.60706])
+		a -= np.array([0.26201,0.0611,0.15003,0.16094,0.12805,0.20706])
 		# The basis for the worldplane
 		worldplane = np.array([[phi,0,1,phi,0,-1],[1,phi,0,-1,phi,0],[0,1,phi,0,-1,phi]])
 		normalworld = worldplane / np.linalg.norm(worldplane[0])
@@ -48,6 +49,12 @@ class numpylattice(MeshInstance):
 							  [-1,-1,1, 2, 1, 1],
 							  [1,-1,-1, 1, 2, 1],
 							  [1, 1, 1, 1, 1, 2]])
+		deflation_face_axes = [ [ 2, 1, 1, 1, 1,-1],
+								[ 1, 2, 1,-1, 1, 1],
+								[ 1, 1, 2, 1,-1, 1],
+								[ 1,-1, 1, 2,-1,-1],
+								[ 1, 1,-1,-1, 2, 1],
+								[-1, 1, 1,-1,-1, 2]]
 		
 		
 		included = np.zeros_like(embedding_space[...,0],dtype=bool)
@@ -153,9 +160,9 @@ class numpylattice(MeshInstance):
 							'constant',constant_values=(False))
 			for face in (embedding_space[corners] + np.array(1-np.array(axes))/2):
 				faces.append(face)
-			for face in (embedding_space[deflation_corners1] + np.array(1-np.array(axes))*(3.0/2)):
+			for face in (embedding_space[deflation_corners1] + 
+						np.array(deflation_face_axes).T.dot(1-np.array(axes))/2.0):
 				deflation_faces.append(face)
-		
 		
 		# Need to know which lines are included, not which points; so we shift
 		# the "included" array over by one in each dimension to compare it
@@ -186,21 +193,42 @@ class numpylattice(MeshInstance):
 							deflated_lines[np.where(i - j == 2)[0][0]].append(j)
 				
 		#Want to identify the chunks
-		
-		
-		
+		chunks = []
+		for point in embedding_space[deflation_included]:
+			# Find dimensions in which we have a neighbor in the positive direction
+			pos_lines = set()
+			for dim in range(6):
+				if np.any(np.all(np.array(deflated_lines[dim]) - point == 0,axis=1)):
+					pos_lines.add(dim)
+			# Consider all sets of 3 such dimensions
+			if len(pos_lines) >= 3:
+				for i in pos_lines:
+					for j in pos_lines - set([i]):
+						for k in pos_lines - set([i,j]):
+							# Check whether all eight cube corners exist with these axes
+							try:
+								if (deflation_included[tuple((point - offset)+deflation_face_axes[i]+deflation_face_axes[j])] and
+									deflation_included[tuple((point - offset)+ deflation_face_axes[i]+deflation_face_axes[k])] and
+									deflation_included[tuple((point - offset)+ deflation_face_axes[j]+deflation_face_axes[k])] and
+									deflation_included[tuple((point - offset)+ deflation_face_axes[i]+deflation_face_axes[j]
+														+deflation_face_axes[k])]):
+									chunks.append(point+(np.array(deflation_face_axes[i])+np.array(deflation_face_axes[j])+np.array(deflation_face_axes[k]))/2)
+							except IndexError:
+								# If one of the indices was out of bound, it's not a chunk, so do nothing.
+								pass
 		# Choose a chunk near origin
-		deflation_faces = np.array(deflation_faces)
+		deflation_faces = np.array(chunks)
 		chosen_center = deflation_faces[
 			np.where(np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1)
 			== np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1).min())[0][0]]
-		chosen_origin = np.floor(chosen_center)
-		chosen_axes = np.array((chosen_center - chosen_origin)*2)
-		chosen_origin = chosen_origin - chosen_axes
-		chosen_axis1 = np.array(np.eye(6)[np.nonzero(chosen_axes)[0][0]])
-		chosen_axis2 = np.array(np.eye(6)[np.nonzero(chosen_axes)[0][1]])
-		chosen_axis3 = np.array(np.eye(6)[np.nonzero(chosen_axes)[0][2]])
 		print(chosen_center)
+		chosen_axes = 1-np.array(chosen_center - np.floor(chosen_center))*2
+		chosen_origin = chosen_center - np.array(deflation_face_axes).T.dot(1-chosen_axes)/2
+		chosen_axis1 = np.array(deflation_face_axes[np.nonzero(chosen_axes)[0][0]])
+		chosen_axis2 = np.array(deflation_face_axes[np.nonzero(chosen_axes)[0][1]])
+		chosen_axis3 = np.array(deflation_face_axes[np.nonzero(chosen_axes)[0][2]])
+		
+					
 		
 		multiplier = 4
 		array_mesh = ArrayMesh()
@@ -245,9 +273,9 @@ class numpylattice(MeshInstance):
 				#np.linalg.norm(point1 - np.array([-27.41640786 -16.94427191  -0.])) < 20 or 
 				#          np.linalg.norm(point2 - np.array([-27.41640786 -16.94427191  -0.])) < 20:
 				#True:#5*multiplier < point1[1] < 10*multiplier:
-				if np.all(np.abs((np.array([point1,point2]) - (chosen_center+chosen_axes*.67).dot(worldplane.T)*multiplier)
-								.dot(np.linalg.inv(normalworld.T[np.nonzero(chosen_axes)[0]]
-								*(phi*phi*phi*np.linalg.norm(worldplane[1])) ))) < 2.351):
+				if np.all(np.abs((np.array([point1,point2]) - (chosen_center).dot(worldplane.T)*multiplier)
+								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
+								*(phi*phi*phi*multiplier) ))) < 0.501):
 					st.add_vertex(Vector3(point1[0],point1[1],point1[2]))
 					st.add_vertex(Vector3(point2[0],point2[1],point2[2]))
 		
