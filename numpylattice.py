@@ -2,6 +2,7 @@ from godot import exposed, export
 from godot import *
 import numpy as np
 from debugging import debugging
+import random as r
 
 COLOR = ResourceLoader.load("res://new_spatialmaterial.tres")
 
@@ -24,6 +25,7 @@ class numpylattice(MeshInstance):
 		#a = np.array([5.1+phi/8,5.2+phi/8,5.3,5.4,5.5,5.6])
 		a = np.array([0.1201,0.61102,0.1003,0.60904,0.0805,0.60706])
 		a -= np.array([0.26201,0.0611,0.15003,0.16094,0.12805,0.20706])
+		a = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
 		# The basis for the worldplane
 		worldplane = np.array([[phi,0,1,phi,0,-1],[1,phi,0,-1,phi,0],[0,1,phi,0,-1,phi]])
 		normalworld = worldplane / np.linalg.norm(worldplane[0])
@@ -64,16 +66,12 @@ class numpylattice(MeshInstance):
 		# six dimensions, comes within a distance of 0.5 of the worldplane. In
 		# other words, does the hypercube centered there intersect the worldplane?
 		# My intuition fought this conclusion for awhile, but it seems to do this 
-		# we have to  check for intersections with individual 3-faces.
-		# (One more scheme for getting around this: The problem seems to be that
-		# projecting the hypercube into parallel space, the metric of the 
-		# embedding space is lost, and the hypercube forms a complex shape (a
-		# triacontahedron) rather than a nice easy shape. What about instead
-		# finding the closest point in the world-plane, but then projecting that
-		# up? I already tried something where I projected the corners down and then
-		# up, but this would be slightly different.)
-		
-		
+		# we have to  check for intersections with individual 3-faces. No one point
+		# can be projected and checked, since there are arrangements which could make
+		# the intersection occur elsewhere. Even just checking all corners doesn't work.
+		# If there is a better solution than checking all faces like this, it would 
+		# have to exploit the known 'angle' of the worldplane to our hypercube to
+		# reduce the number of cases to check.
 		
 		ch3 = [[1,1,1,0,0,0],[1,1,0,1,0,0],[1,1,0,0,1,0],[1,1,0,0,0,1],[1,0,1,1,0,0],[1,0,1,0,1,0],
 						[1,0,1,0,0,1],[1,0,0,1,1,0],[1,0,0,1,0,1],[1,0,0,0,1,1],[0,1,1,1,0,0],[0,1,1,0,1,0],
@@ -142,10 +140,6 @@ class numpylattice(MeshInstance):
 			deflation_included = (deflation_included + deflation_corners1 + deflation_corners2 + deflation_corners3
 								+ deflation_corners4 + deflation_corners5 + deflation_corners6
 								+ deflation_corners7 + deflation_corners8)
-			# for debugging
-			#intersections.append( (embedding_space-a-np.ones(6)/2).dot(normallel.T)
-			#				.dot( np.linalg.inv(normallel.T[np.nonzero(axes)[0]]))
-			#				.dot(np.eye(6)[np.nonzero(np.array(axes))[0]]))
 			
 			fixedvectors = np.array([[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],
 									[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0]])
@@ -153,16 +147,13 @@ class numpylattice(MeshInstance):
 			fixedvectors[3] = fixedvectors[0] + fixedvectors[1]
 			fixedvectors[4] = fixedvectors[0] + fixedvectors[2]
 			fixedvectors[5] = fixedvectors[1] + fixedvectors[2]
-			fixedvectors[6] = 1-np.array(axes)
+			fixedvectors[6] = fixedvectors[0] + fixedvectors[1] + fixedvectors[2]#1-np.array(axes)
 			for fv in fixedvectors:
 				included = included + np.pad(corners[fv[0]:,fv[1]:,
 							fv[2]:,fv[3]:,fv[4]:,fv[5]:],((0,fv[0]),(0,fv[1]),(0,fv[2]),(0,fv[3]),(0,fv[4]),(0,fv[5])),
 							'constant',constant_values=(False))
-			for face in (embedding_space[corners] + np.array(1-np.array(axes))/2):
-				faces.append(face)
-			for face in (embedding_space[deflation_corners1] + 
-						np.array(deflation_face_axes).T.dot(1-np.array(axes))/2.0):
-				deflation_faces.append(face)
+#			for face in (embedding_space[corners] + np.array(np.array(axes))/2):
+#				faces.append(face)
 		
 		# Need to know which lines are included, not which points; so we shift
 		# the "included" array over by one in each dimension to compare it
@@ -191,8 +182,30 @@ class numpylattice(MeshInstance):
 					if np.sum(np.abs(i - j)) == 7:
 						if np.where(i - j == 2)[0].shape == (1,):
 							deflated_lines[np.where(i - j == 2)[0][0]].append(j)
-				
-		#Want to identify the chunks
+		
+		#Want to identify the blocks and chunks
+		blocks = []
+		for axes in ch3:
+			ax1, ax2, ax3 = np.eye(6,dtype=np.int64)[np.nonzero(axes)[0]]
+			#print([ax1,ax2,ax3])
+			ax12 = ax1 + ax2
+			ax13 = ax1 + ax3
+			ax23 = ax2 + ax3
+			ax123 = ax12 + ax3
+			r1,r2,r3,r4,r5,r6,r7,r8 = (included[:esize-1,:esize-1,:esize-1,:esize-1,:esize-1,:esize-1],
+				included[ax1[0]:esize-1+ax1[0],ax1[1]:esize-1+ax1[1],ax1[2]:esize-1+ax1[2],ax1[3]:esize-1+ax1[3],ax1[4]:esize-1+ax1[4],ax1[5]:esize-1+ax1[5]],
+				included[ax2[0]:esize-1+ax2[0],ax2[1]:esize-1+ax2[1],ax2[2]:esize-1+ax2[2],ax2[3]:esize-1+ax2[3],ax2[4]:esize-1+ax2[4],ax2[5]:esize-1+ax2[5]],
+				included[ax3[0]:esize-1+ax3[0],ax3[1]:esize-1+ax3[1],ax3[2]:esize-1+ax3[2],ax3[3]:esize-1+ax3[3],ax3[4]:esize-1+ax3[4],ax3[5]:esize-1+ax3[5]],
+				included[ax12[0]:esize-1+ax12[0],ax12[1]:esize-1+ax12[1],ax12[2]:esize-1+ax12[2],ax12[3]:esize-1+ax12[3],ax12[4]:esize-1+ax12[4],ax12[5]:esize-1+ax12[5]],
+				included[ax13[0]:esize-1+ax13[0],ax13[1]:esize-1+ax13[1],ax13[2]:esize-1+ax13[2],ax13[3]:esize-1+ax13[3],ax13[4]:esize-1+ax13[4],ax13[5]:esize-1+ax13[5]],
+				included[ax23[0]:esize-1+ax23[0],ax23[1]:esize-1+ax23[1],ax23[2]:esize-1+ax23[2],ax23[3]:esize-1+ax23[3],ax23[4]:esize-1+ax23[4],ax23[5]:esize-1+ax23[5]],
+				included[ax123[0]:esize-1+ax123[0],ax123[1]:esize-1+ax123[1],ax123[2]:esize-1+ax123[2],ax123[3]:esize-1+ax123[3],ax123[4]:esize-1+ax123[4],ax123[5]:esize-1+ax123[5]])
+			#print(str(r1.shape)+" "+str(r2.shape)+" "+str(r3.shape)+" "+str(r4.shape)+" "+str(r5.shape)+" "+str(r6.shape)+" "+str(r7.shape)+" "+str(r8.shape))
+			nonzero = np.nonzero(np.all([r1,r2,r3,r4,r5,r6,r7,r8],axis=0))
+			for block in embedding_space[nonzero]:
+				blocks.append(block+np.array(ax123,dtype=np.float)/2)
+		print("Found "+str(len(blocks))+" blocks.")
+		
 		chunks = []
 		for point in embedding_space[deflation_included]:
 			# Find dimensions in which we have a neighbor in the positive direction
@@ -207,12 +220,17 @@ class numpylattice(MeshInstance):
 						for k in pos_lines - set([i,j]):
 							# Check whether all eight cube corners exist with these axes
 							try:
-								if (deflation_included[tuple((point - offset)+deflation_face_axes[i]+deflation_face_axes[j])] and
-									deflation_included[tuple((point - offset)+ deflation_face_axes[i]+deflation_face_axes[k])] and
-									deflation_included[tuple((point - offset)+ deflation_face_axes[j]+deflation_face_axes[k])] and
-									deflation_included[tuple((point - offset)+ deflation_face_axes[i]+deflation_face_axes[j]
+								if (deflation_included[tuple((point - offset)+deflation_face_axes[i]
+														+deflation_face_axes[j])] and
+									deflation_included[tuple((point - offset)+ deflation_face_axes[i]
+														+deflation_face_axes[k])] and
+									deflation_included[tuple((point - offset)+ deflation_face_axes[j]
+														+deflation_face_axes[k])] and
+									deflation_included[tuple((point - offset)+ deflation_face_axes[i]
+														+deflation_face_axes[j]
 														+deflation_face_axes[k])]):
-									chunks.append(point+(np.array(deflation_face_axes[i])+np.array(deflation_face_axes[j])+np.array(deflation_face_axes[k]))/2)
+									chunks.append(point+(np.array(deflation_face_axes[i])
+										+np.array(deflation_face_axes[j])+np.array(deflation_face_axes[k]))/2)
 							except IndexError:
 								# If one of the indices was out of bound, it's not a chunk, so do nothing.
 								pass
@@ -233,28 +251,6 @@ class numpylattice(MeshInstance):
 		multiplier = 4
 		array_mesh = ArrayMesh()
 		self.mesh = array_mesh
-		st = SurfaceTool()
-#		st.begin(Mesh.PRIMITIVE_LINES)
-#
-#		multiplier = 4
-#		st.add_color(Color(1,0,1))
-#		for dim in range(6):
-#			basis_element = np.zeros(6)
-#			basis_element[dim] = 1
-#			offset = basis_element.dot(worldplane.T)#*(-phi*phi*phi)
-#			for line in all_lines[dim]:
-#				point1 = line.dot(worldplane.T)
-#				point2 = point1 + offset
-#				point1 *= multiplier*(-phi*phi*phi)
-#				point2 *= multiplier*(-phi*phi*phi)
-#				#if True:#np.linalg.norm(point1 - np.array([-27.41640786 -16.94427191  -0.])) < 20 or 
-#				#           np.linalg.norm(point2 - np.array([-27.41640786 -16.94427191  -0.])) < 20:
-#				if np.all(np.abs((np.array([point1,point2])/(multiplier*np.linalg.norm(worldplane[1])))
-#									.dot(np.linalg.inv(normalworld.T[np.nonzero(chosen_axes)[0]]*
-#									(-phi*phi*phi))) - 0.5) < .501):
-#					st.add_vertex(Vector3(point1[0],point1[1],point1[2]))
-#					st.add_vertex(Vector3(point2[0],point2[1],point2[2]))
-#		st.commit(self.mesh)
 		
 		
 		st = SurfaceTool()
@@ -270,9 +266,6 @@ class numpylattice(MeshInstance):
 				point2 = point1 + offset
 				point1 *= multiplier
 				point2 *= multiplier
-				#np.linalg.norm(point1 - np.array([-27.41640786 -16.94427191  -0.])) < 20 or 
-				#          np.linalg.norm(point2 - np.array([-27.41640786 -16.94427191  -0.])) < 20:
-				#True:#5*multiplier < point1[1] < 10*multiplier:
 				if np.all(np.abs((np.array([point1,point2]) - (chosen_center).dot(worldplane.T)*multiplier)
 								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
 								*(phi*phi*phi*multiplier) ))) < 0.501):
@@ -293,27 +286,30 @@ class numpylattice(MeshInstance):
 				point2 = point1 + offset
 				point1 *= multiplier#*(-phi*phi*phi)
 				point2 *= multiplier#*(-phi*phi*phi)
-				#if True:#np.linalg.norm(point1 - np.array([-27.41640786 -16.94427191  -0.])) < 20 or 
-				#           np.linalg.norm(point2 - np.array([-27.41640786 -16.94427191  -0.])) < 20:
-				if True:#np.all(np.abs((np.array([point1,point2])/(multiplier*np.linalg.norm(worldplane[1])))
-					#				.dot(np.linalg.inv(normalworld.T[np.nonzero(chosen_axes)[0]]*
-					#				(-phi*phi*phi))) - 0.5) < .8):
+				if np.all(np.abs((np.array([point1,point2]) - (chosen_center).dot(worldplane.T)*multiplier)
+								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
+								*(phi*phi*phi*multiplier) ))) < 0.501):
 					st.add_vertex(Vector3(point1[0],point1[1],point1[2]))
 					st.add_vertex(Vector3(point2[0],point2[1],point2[2]))
 		st.commit(self.mesh)
 		
 		self.mesh.surface_set_material(1,COLOR)
 		
-		debugging.breakpoint()
+		st.begin(Mesh.PRIMITIVE_LINES)
+		st.add_color(Color(0,.5,0))
+		for block in blocks:
+			if np.all(np.abs((np.array(block).dot(worldplane.T)*multiplier - (chosen_center).dot(worldplane.T)*multiplier)
+								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
+								*(phi*phi*phi*multiplier) ))) < 0.501):
+				# Represents a voxel inside our chosen chunk
+				face_origin = np.floor(block).dot(worldplane.T)*multiplier
+				face_tip = np.ceil(block).dot(worldplane.T)*multiplier
+				#nonsense
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2]))
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2]))
+		st.commit(self.mesh)
+
+		self.mesh.surface_set_material(2,COLOR)
 		
 		latticepoints = embedding_space[included]
-#		st = SurfaceTool()
-#		st.begin(Mesh.PRIMITIVE_POINTS)
-#		for point in latticepoints:
-#			worldpoint = multiplier*point.dot(worldplane.T)
-#			st.add_vertex(Vector3(worldpoint[0],worldpoint[1],worldpoint[2]))
-			
-		#array_mesh = ArrayMesh()
-		#st.commit(array_mesh)
-		#self.mesh = array_mesh
 		print(latticepoints.shape)
