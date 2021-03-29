@@ -3,6 +3,7 @@ from godot import *
 import numpy as np
 from debugging import debugging
 import random as r
+import time
 
 COLOR = ResourceLoader.load("res://new_spatialmaterial.tres")
 
@@ -24,14 +25,18 @@ class numpylattice(MeshInstance):
 #		pass
 	
 	def _ready(self):
+		starttime = time.perf_counter()
 		phi = 1.61803398874989484820458683
 		# Set up a 6D array holding 6-vectors which are their own coords
 		# w/in the array
 		esize = 10
 		offset = -5
-		embedding_space = np.zeros((esize,esize,esize,esize,esize,esize,6),dtype=np.int8)
-		for index,x in np.ndenumerate(embedding_space[...,0]):
-			embedding_space[index] = np.array(index) + offset
+		#embedding_space = np.zeros((esize,esize,esize,esize,esize,esize,6),dtype=np.int8)
+		print("Creating embedding space; t="+str(time.perf_counter()-starttime))
+#		for index,x in np.ndenumerate(embedding_space[...,0]):
+#			embedding_space[index] = np.array(index) + offset
+		embedding_space = np.indices((esize,esize,esize,esize,esize,esize),dtype=np.int8).T[...,-1::-1] + offset
+		print("Done creating embedding space; t="+str(time.perf_counter()-starttime))
 		# "a" is the origin of the worldplane. Just want it to be nonsingular,
 		# ie, worldplane shouldn't intersect any 6D integer lattice points.
 		# Also want worldplane to intersect at least some of the values we
@@ -166,7 +171,7 @@ class numpylattice(MeshInstance):
 #				included = included + np.pad(corners[fv[0]:,fv[1]:,
 #							fv[2]:,fv[3]:,fv[4]:,fv[5]:],((0,fv[0]),(0,fv[1]),(0,fv[2]),(0,fv[3]),(0,fv[4]),(0,fv[5])),
 #							'constant',constant_values=(False))
-		
+		print("Setting up 2-face geometry t="+str(time.perf_counter()-starttime))
 		twoface_axes = np.array([[1,1,0,0,0,0],[1,0,1,0,0,0],[1,0,0,1,0,0],[1,0,0,0,1,0],[1,0,0,0,0,1],
 			[0,1,1,0,0,0],[0,1,0,1,0,0],[0,1,0,0,1,0],[0,1,0,0,0,1],[0,0,1,1,0,0],
 			[0,0,1,0,1,0],[0,0,1,0,0,1],[0,0,0,1,1,0],[0,0,0,1,0,1],[0,0,0,0,1,1]])
@@ -191,21 +196,19 @@ class numpylattice(MeshInstance):
 		twoface_normals = twoface_normals/np.linalg.norm(twoface_normals,axis=1)[0]
 		# TODO The expression at the end evaluates to 0.9732489894677302
 		# This seems to be correct after checking various a-values, but
-		# geometrically I don't understand the division by 2. 
-		included = np.max(np.abs(np.sum(np.stack(np.repeat([embedding_space
+		# geometrically I don't understand the division by 2.
+		print("Ready to compute lattice at t="+str(time.perf_counter()-starttime))
+		constraints = np.sum(np.stack(np.repeat([embedding_space
 			.reshape((-1,6))-a],30,axis=0),axis=1).dot(normallel.T)
 			* np.concatenate(np.array([twoface_normals,-twoface_normals])
-			.reshape((1,30,3))),axis=-1)),axis=1) <  np.linalg.norm(np.array([0,0,1,-1,-1,-1])
-			.dot(normallel.T))/2
+			.reshape((1,30,3))),axis=-1)
+		distance_scores = np.max(constraints,axis=1)
+		included = distance_scores < np.linalg.norm(np.array([0,0,1,-1,-1,-1]).dot(normallel.T))/2
 		included = included.reshape((esize,esize,esize,esize,esize,esize))
-		
-		deflation_included = np.max(np.abs(np.sum(np.stack(np.repeat([embedding_space
-			.reshape((-1,6))-a],30,axis=0),axis=1).dot(normallel.T)
-			* np.concatenate(np.array([twoface_normals,-twoface_normals])
-			.reshape((1,30,3))),axis=-1)),axis=1) <  np.linalg.norm(np.array([0,0,1,-1,-1,-1])
-			.dot(normallel.T))/(2*phi*phi*phi)
+		print("Latticepoints found in "+str(time.perf_counter()-starttime))
+		deflation_included = distance_scores < np.linalg.norm(np.array([0,0,1,-1,-1,-1]).dot(normallel.T))/(2*phi*phi*phi)
 		deflation_included = deflation_included.reshape((esize,esize,esize,esize,esize,esize))
-		
+		print("Chunks found in "+str(time.perf_counter()-starttime))
 		
 		# Need to know which lines are included, not which points; so we shift
 		# the "included" array over by one in each dimension to compare it
@@ -221,7 +224,7 @@ class numpylattice(MeshInstance):
 		lines5 = embedding_space[np.nonzero(np.all([included[...,:esize-1],included[...,1:]],axis=0))]
 		
 		all_lines = [lines0,lines1,lines2,lines3,lines4,lines5]
-		
+		print("Lines found in "+str(time.perf_counter()-starttime))
 		# Deflated lines are of distance 3 apart, having a distance of 1 in five
 		# of their coordinates and a distance of 2 in one of them.
 		deflated_lines = [[],[],[],[],[],[]]
@@ -236,7 +239,7 @@ class numpylattice(MeshInstance):
 							deflated_lines[np.where(i - j == 2)[0][0]].append(j)
 		
 		#Want to identify the blocks and chunks
-		
+		print("Deflated lines found in "+str(time.perf_counter()-starttime))
 		blocks = np.zeros((0,6))
 		for axes in ch3:
 			ax1, ax2, ax3 = np.eye(6,dtype=np.int64)[np.nonzero(axes)[0]]
@@ -264,7 +267,7 @@ class numpylattice(MeshInstance):
 			blocks = np.concatenate((blocks,embedding_space[nonzero]+np.array(ax123,dtype=np.float)/2))
 #			for block in embedding_space[nonzero]:
 #				blocks.append(block+np.array(ax123,dtype=np.float)/2)
-		
+		print("Found "+str(len(blocks))+" blocks. t="+str(time.perf_counter()-starttime))
 		
 		chunks = []
 		for point in embedding_space[deflation_included]:
@@ -294,7 +297,7 @@ class numpylattice(MeshInstance):
 							except IndexError:
 								# If one of the indices was out of bound, it's not a chunk, so do nothing.
 								pass
-		
+		print("Chunks computed. t="+str(time.perf_counter()-starttime)+" seconds")
 		# TODO It seems that very occasionally, deflation_faces is empty at this
 		# point; probably just means esize has to be greater than 8 to guarantee there are chunks.
 		# Recording a-values where this happens: [ 0.03464434, -0.24607234,
@@ -306,7 +309,7 @@ class numpylattice(MeshInstance):
 		chosen_center = deflation_faces[
 			np.where(np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1)
 			== np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1).min())[0][0]]
-		print("Chose chunk "+str(chosen_center))
+		print("Chose chunk "+str(chosen_center)+" second="+str(time.perf_counter()-starttime))
 		chosen_axes = 1-np.array(chosen_center - np.floor(chosen_center))*2
 		chosen_origin = chosen_center - np.array(deflation_face_axes).T.dot(1-chosen_axes)/2
 		chosen_axis1 = np.array(deflation_face_axes[np.nonzero(chosen_axes)[0][0]])
@@ -320,7 +323,7 @@ class numpylattice(MeshInstance):
 		
 		
 		st = SurfaceTool()
-		
+		print("Drawing neighbor blocks next. seconds="+str(time.perf_counter()-starttime))
 		st.begin(Mesh.PRIMITIVE_LINES)
 		st.add_color(Color(0,.5,0))
 		for block in blocks:
@@ -368,9 +371,9 @@ class numpylattice(MeshInstance):
 				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir3)
 				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir2)
 		st.commit(self.mesh)
-		
+
 		self.mesh.surface_set_material(0,COLOR)
-		
+		print("Drawing inner blocks. "+str(time.perf_counter()-starttime))
 		st.begin(Mesh.PRIMITIVE_LINES)
 		for block in blocks:
 			if np.all(np.abs((np.array(block).dot(worldplane.T)*multiplier - (chosen_center)
@@ -454,41 +457,19 @@ class numpylattice(MeshInstance):
 		
 		latticepoints = embedding_space[included]
 		print(latticepoints.shape)
-		"""
+		print("Done with rendering. t="+str(time.perf_counter()-starttime))
+		
 		# Now we want to calculate the validity bounds for this chunk.
-		"""
-		twoface_axes = np.array([[1,1,0,0,0,0],[1,0,1,0,0,0],[1,0,0,1,0,0],[1,0,0,0,1,0],[1,0,0,0,0,1],
-			[0,1,1,0,0,0],[0,1,0,1,0,0],[0,1,0,0,1,0],[0,1,0,0,0,1],[0,0,1,1,0,0],
-			[0,0,1,0,1,0],[0,0,1,0,0,1],[0,0,0,1,1,0],[0,0,0,1,0,1],[0,0,0,0,1,1]])
-		twoface_projected = np.array([
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 0]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 1]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 2]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 3]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 4]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 5]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 6]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 7]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 8]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 9]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 10]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 11]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 12]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 13]],
-				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 14]]
-			])
-		twoface_normals = np.cross(twoface_projected[:,0],twoface_projected[:,1])
-		twoface_normals = twoface_normals/np.linalg.norm(twoface_normals,axis=1)[0]
 		relevance = np.all(np.abs((embedding_space[included].dot(worldplane.T)*multiplier 
 								- (chosen_center).dot(worldplane.T)*multiplier)
 								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
 								*(phi*phi*phi*multiplier) ))) < 0.501,axis=1)
-		relevant_points = embedding_space[included]#[relevance]
+		relevant_points = embedding_space[included][relevance]
 		constraints = np.sum(np.stack(np.repeat([relevant_points - a],30,axis=0),axis=1).dot(normallel.T)
 			* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
 		#print(np.max(constraints))
 		print(np.max(np.abs(constraints)))#0.9731908764184711 max so far
-		
+		print("t="+str(time.perf_counter()-starttime))
 		# Checking an alternate inclusion criterion
 #		# TODO The expression at the end evaluates to 0.9732489894677302
 #		# This seems to be correct after checking various a-values, but
