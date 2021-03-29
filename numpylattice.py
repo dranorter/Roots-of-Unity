@@ -8,12 +8,26 @@ COLOR = ResourceLoader.load("res://new_spatialmaterial.tres")
 
 @exposed(tool=True)
 class numpylattice(MeshInstance):
+#	phi = 1.61803398874989484820458683
+#	parallelspace = np.array([[-1/phi,0,1,-1/phi,0,-1],
+#								  [1,-1/phi,0,-1,-1/phi,0],
+#								  [0,1,-1/phi,0,-1,-1/phi]])
+#	normallel = parallelspace / np.linalg.norm(parallelspace[0])
+#	squarallel = normallel.T.dot(normallel)
+	
+#	def existence_boundaries(points):
+#		""" Takes an ndarray of points in R^6 and returns an ndarray of bounds on
+#		 the worldplane offset which make each point part of the lattice.
+#		"""
+#		# We assume each point is currently part of the lattice, and give
+#		# bounds in both positive and negative direction.
+#		pass
 	
 	def _ready(self):
 		phi = 1.61803398874989484820458683
 		# Set up a 6D array holding 6-vectors which are their own coords
 		# w/in the array
-		esize = 8
+		esize = 9
 		offset = -4
 		embedding_space = np.zeros((esize,esize,esize,esize,esize,esize,6),dtype=np.int8)
 		for index,x in np.ndenumerate(embedding_space[...,0]):
@@ -83,7 +97,6 @@ class numpylattice(MeshInstance):
 		# 3-face also bounds eight different hypercubes, so we can check
 		# every hypercube by systematically choosing one of those eight
 		# 3-faces.
-		# For debugging:
 		intersections = []
 		faces = []
 		deflation_faces = []
@@ -108,6 +121,7 @@ class numpylattice(MeshInstance):
 			# axis.
 			corners = np.all(np.abs((embedding_space-a-np.ones(6)/2).dot(normallel.T)
 							.dot( np.linalg.inv(normallel.T[np.nonzero(axes)[0]]) )+np.ones(3)/2)<0.5,axis=6)
+			
 			deflation_corners1 = np.all(np.abs((embedding_space-a-np.ones(6)/(2*phi*phi*phi)).dot(normallel.T)
 							.dot(np.linalg.inv(normallel.T[np.nonzero(axes)[0]]/(phi*phi*phi)))+np.ones(3)/2)<0.5,axis=6)
 			deflation_corners2 = np.all(np.abs((embedding_space-a-(np.ones(6)
@@ -154,6 +168,35 @@ class numpylattice(MeshInstance):
 							'constant',constant_values=(False))
 #			for face in (embedding_space[corners] + np.array(np.array(axes))/2):
 #				faces.append(face)
+		# Just a test
+#		twoface_axes = np.array([[1,1,0,0,0,0],[1,0,1,0,0,0],[1,0,0,1,0,0],[1,0,0,0,1,0],[1,0,0,0,0,1],
+#			[0,1,1,0,0,0],[0,1,0,1,0,0],[0,1,0,0,1,0],[0,1,0,0,0,1],[0,0,1,1,0,0],
+#			[0,0,1,0,1,0],[0,0,1,0,0,1],[0,0,0,1,1,0],[0,0,0,1,0,1],[0,0,0,0,1,1]])
+#		twoface_projected = np.array([
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 0]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 1]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 2]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 3]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 4]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 5]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 6]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 7]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 8]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 9]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 10]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 11]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 12]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 13]],
+#				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 14]]
+#			])
+#		twoface_normals = np.cross(twoface_projected[:,0],twoface_projected[:,1])
+#		twoface_normals = twoface_normals/np.linalg.norm(twoface_normals,axis=1)[0]
+#		included = np.max(np.abs(np.sum(np.stack(np.repeat([embedding_space
+#			.reshape((-1,6))],30,axis=0),axis=1).dot(normallel.T)
+#			* np.concatenate(np.array([twoface_normals,-twoface_normals])
+#			.reshape((1,30,3))),axis=-1)),axis=1) < 0.95#2.288245611270737
+#		included = included.reshape((esize,esize,esize,esize,esize,esize))
+		
 		
 		# Need to know which lines are included, not which points; so we shift
 		# the "included" array over by one in each dimension to compare it
@@ -184,7 +227,7 @@ class numpylattice(MeshInstance):
 							deflated_lines[np.where(i - j == 2)[0][0]].append(j)
 		
 		#Want to identify the blocks and chunks
-		blocks = []
+		blocks = np.zeros((0,6))
 		for axes in ch3:
 			ax1, ax2, ax3 = np.eye(6,dtype=np.int64)[np.nonzero(axes)[0]]
 			#print([ax1,ax2,ax3])
@@ -193,17 +236,24 @@ class numpylattice(MeshInstance):
 			ax23 = ax2 + ax3
 			ax123 = ax12 + ax3
 			r1,r2,r3,r4,r5,r6,r7,r8 = (included[:esize-1,:esize-1,:esize-1,:esize-1,:esize-1,:esize-1],
-				included[ax1[0]:esize-1+ax1[0],ax1[1]:esize-1+ax1[1],ax1[2]:esize-1+ax1[2],ax1[3]:esize-1+ax1[3],ax1[4]:esize-1+ax1[4],ax1[5]:esize-1+ax1[5]],
-				included[ax2[0]:esize-1+ax2[0],ax2[1]:esize-1+ax2[1],ax2[2]:esize-1+ax2[2],ax2[3]:esize-1+ax2[3],ax2[4]:esize-1+ax2[4],ax2[5]:esize-1+ax2[5]],
-				included[ax3[0]:esize-1+ax3[0],ax3[1]:esize-1+ax3[1],ax3[2]:esize-1+ax3[2],ax3[3]:esize-1+ax3[3],ax3[4]:esize-1+ax3[4],ax3[5]:esize-1+ax3[5]],
-				included[ax12[0]:esize-1+ax12[0],ax12[1]:esize-1+ax12[1],ax12[2]:esize-1+ax12[2],ax12[3]:esize-1+ax12[3],ax12[4]:esize-1+ax12[4],ax12[5]:esize-1+ax12[5]],
-				included[ax13[0]:esize-1+ax13[0],ax13[1]:esize-1+ax13[1],ax13[2]:esize-1+ax13[2],ax13[3]:esize-1+ax13[3],ax13[4]:esize-1+ax13[4],ax13[5]:esize-1+ax13[5]],
-				included[ax23[0]:esize-1+ax23[0],ax23[1]:esize-1+ax23[1],ax23[2]:esize-1+ax23[2],ax23[3]:esize-1+ax23[3],ax23[4]:esize-1+ax23[4],ax23[5]:esize-1+ax23[5]],
-				included[ax123[0]:esize-1+ax123[0],ax123[1]:esize-1+ax123[1],ax123[2]:esize-1+ax123[2],ax123[3]:esize-1+ax123[3],ax123[4]:esize-1+ax123[4],ax123[5]:esize-1+ax123[5]])
-			#print(str(r1.shape)+" "+str(r2.shape)+" "+str(r3.shape)+" "+str(r4.shape)+" "+str(r5.shape)+" "+str(r6.shape)+" "+str(r7.shape)+" "+str(r8.shape))
+				included[ax1[0]:esize-1+ax1[0],ax1[1]:esize-1+ax1[1],ax1[2]:esize-1+ax1[2],
+					ax1[3]:esize-1+ax1[3],ax1[4]:esize-1+ax1[4],ax1[5]:esize-1+ax1[5]],
+				included[ax2[0]:esize-1+ax2[0],ax2[1]:esize-1+ax2[1],ax2[2]:esize-1+ax2[2],
+					ax2[3]:esize-1+ax2[3],ax2[4]:esize-1+ax2[4],ax2[5]:esize-1+ax2[5]],
+				included[ax3[0]:esize-1+ax3[0],ax3[1]:esize-1+ax3[1],ax3[2]:esize-1+ax3[2],
+					ax3[3]:esize-1+ax3[3],ax3[4]:esize-1+ax3[4],ax3[5]:esize-1+ax3[5]],
+				included[ax12[0]:esize-1+ax12[0],ax12[1]:esize-1+ax12[1],ax12[2]:esize-1+ax12[2],
+					ax12[3]:esize-1+ax12[3],ax12[4]:esize-1+ax12[4],ax12[5]:esize-1+ax12[5]],
+				included[ax13[0]:esize-1+ax13[0],ax13[1]:esize-1+ax13[1],ax13[2]:esize-1+ax13[2],
+					ax13[3]:esize-1+ax13[3],ax13[4]:esize-1+ax13[4],ax13[5]:esize-1+ax13[5]],
+				included[ax23[0]:esize-1+ax23[0],ax23[1]:esize-1+ax23[1],ax23[2]:esize-1+ax23[2],
+					ax23[3]:esize-1+ax23[3],ax23[4]:esize-1+ax23[4],ax23[5]:esize-1+ax23[5]],
+				included[ax123[0]:esize-1+ax123[0],ax123[1]:esize-1+ax123[1],ax123[2]:esize-1+ax123[2],
+					ax123[3]:esize-1+ax123[3],ax123[4]:esize-1+ax123[4],ax123[5]:esize-1+ax123[5]])
 			nonzero = np.nonzero(np.all([r1,r2,r3,r4,r5,r6,r7,r8],axis=0))
-			for block in embedding_space[nonzero]:
-				blocks.append(block+np.array(ax123,dtype=np.float)/2)
+			blocks = np.concatenate((blocks,embedding_space[nonzero]+np.array(ax123,dtype=np.float)/2))
+#			for block in embedding_space[nonzero]:
+#				blocks.append(block+np.array(ax123,dtype=np.float)/2)
 		print("Found "+str(len(blocks))+" blocks.")
 		
 		chunks = []
@@ -234,6 +284,13 @@ class numpylattice(MeshInstance):
 							except IndexError:
 								# If one of the indices was out of bound, it's not a chunk, so do nothing.
 								pass
+		
+		# TODO It seems that very occasionally, deflation_faces is empty at this
+		# point; probably just means esize has to be greater than 8 to guarantee there are chunks.
+		# Recording a-values where this happens: [ 0.03464434, -0.24607234,
+		# -0.05386369,  0.2771699,   0.39596138,  0.45066235]
+
+		
 		# Choose a chunk near origin
 		deflation_faces = np.array(chunks)
 		chosen_center = deflation_faces[
@@ -295,6 +352,7 @@ class numpylattice(MeshInstance):
 		
 		self.mesh.surface_set_material(1,COLOR)
 		
+		
 		st.begin(Mesh.PRIMITIVE_LINES)
 		st.add_color(Color(0,.5,0))
 		for block in blocks:
@@ -313,3 +371,65 @@ class numpylattice(MeshInstance):
 		
 		latticepoints = embedding_space[included]
 		print(latticepoints.shape)
+		
+		# Now we want to calculate the validity bounds for this chunk.
+		
+		twoface_axes = np.array([[1,1,0,0,0,0],[1,0,1,0,0,0],[1,0,0,1,0,0],[1,0,0,0,1,0],[1,0,0,0,0,1],
+			[0,1,1,0,0,0],[0,1,0,1,0,0],[0,1,0,0,1,0],[0,1,0,0,0,1],[0,0,1,1,0,0],
+			[0,0,1,0,1,0],[0,0,1,0,0,1],[0,0,0,1,1,0],[0,0,0,1,0,1],[0,0,0,0,1,1]])
+		twoface_projected = np.array([
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 0]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 1]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 2]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 3]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 4]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 5]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 6]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 7]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 8]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 9]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 10]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 11]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 12]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 13]],
+				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 14]]
+			])
+		twoface_normals = np.cross(twoface_projected[:,0],twoface_projected[:,1])
+		twoface_normals = twoface_normals/np.linalg.norm(twoface_normals,axis=1)[0]
+		relevance = np.all(np.abs((embedding_space[included].dot(worldplane.T)*multiplier - (chosen_center).dot(worldplane.T)*multiplier)
+								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
+								*(phi*phi*phi*multiplier) ))) < 0.501,axis=1)
+		relevant_points = embedding_space[included]#[relevance]
+		constraints = np.sum(np.stack(np.repeat([relevant_points - a],30,axis=0),axis=1).dot(normallel.T)
+			* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
+		#print(np.max(constraints))
+		print(np.max(np.abs(constraints)))#0.9731908764184711 max so far
+		# Checking an alternate inclusion criterion
+		# TODO The expression at the end evaluates to 0.9732489894677302
+		# This seems to be correct after checking various a-values, but
+		# geometrically I don't understand the division by 2. 
+		included_test = np.max(np.abs(np.sum(np.stack(np.repeat([embedding_space
+			.reshape((-1,6))-a],30,axis=0),axis=1).dot(normallel.T)
+			* np.concatenate(np.array([twoface_normals,-twoface_normals])
+			.reshape((1,30,3))),axis=-1)),axis=1) <  np.linalg.norm(np.array([0,0,1,-1,-1,-1]).dot(normallel.T))/2
+		print(str(included_test.shape) + " vs " + str(included.flatten().shape))
+		print(embedding_space.reshape((-1,6))[included_test].shape)
+		print("Missing "+str(embedding_space[included].shape[0] - 
+			embedding_space.reshape((-1,6))[included_test].shape[0])+" points captured by old algorithm.")
+		print(np.array(np.nonzero(included_test == included.flatten())).shape[1])
+		print("Disagreeing on " + str(
+			included_test.shape[0] - np.array(np.nonzero(included_test == included.flatten())).shape[1])+" points.")
+		if (included_test.shape[0] - np.array(np.nonzero(included_test == included.flatten())).shape[1]) > 0:
+			# Calculate exact gap for points of difference
+#			full_constraints = np.sum(np.stack(np.repeat([relevant_points - a],30,axis=0),axis=1).dot(normallel.T)
+#				* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
+			full_constraints = np.max(np.abs(np.sum(np.stack(np.repeat([embedding_space
+				.reshape((-1,6))-a],30,axis=0),axis=1).dot(normallel.T)
+				* np.concatenate(np.array([twoface_normals,-twoface_normals])
+				.reshape((1,30,3))),axis=-1)),axis=1)
+			print("Points novel to new test:")
+			print(full_constraints[np.logical_and(included_test != included.flatten(),included_test)])
+			print(np.array(np.nonzero(np.logical_and(included_test.reshape((esize,esize,esize,esize,esize,esize))
+				 != included,included_test.reshape((esize,esize,esize,esize,esize,esize)) ))).T)
+			print("Old points missing in new test:")
+			print(full_constraints[np.logical_and(included_test != included.flatten(),included.flatten())])
