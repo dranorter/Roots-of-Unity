@@ -171,6 +171,18 @@ class numpylattice(MeshInstance):
 #				included = included + np.pad(corners[fv[0]:,fv[1]:,
 #							fv[2]:,fv[3]:,fv[4]:,fv[5]:],((0,fv[0]),(0,fv[1]),(0,fv[2]),(0,fv[3]),(0,fv[4]),(0,fv[5])),
 #							'constant',constant_values=(False))
+		
+		# A point is in our grid if the hypercube centered on that point intersects
+		# the world-plane. We calculate this by projecting the hypercube into
+		# parallel space, so it becomes a rhombic triacontahedron. 30 of the
+		# hypercube's 480 2-faces form the outer boundary of this shape, and
+		# the distance to the planes of these faces become the constraints for
+		# inclusion.
+		# Using the 30 constraints like that isn't the fastest algorithm, but
+		# has huge simplicity advantages and can make good use of numpy.
+		# If I had some reason to optimize this step, one approach would be to
+		# eliminate and/or include a lot of points using faster checks, so that
+		# this 30-fold computation would only run on what's left.
 		print("Setting up 2-face geometry t="+str(time.perf_counter()-starttime))
 		twoface_axes = np.array([[1,1,0,0,0,0],[1,0,1,0,0,0],[1,0,0,1,0,0],[1,0,0,0,1,0],[1,0,0,0,0,1],
 			[0,1,1,0,0,0],[0,1,0,1,0,0],[0,1,0,0,1,0],[0,1,0,0,0,1],[0,0,1,1,0,0],
@@ -194,15 +206,24 @@ class numpylattice(MeshInstance):
 			])
 		twoface_normals = np.cross(twoface_projected[:,0],twoface_projected[:,1])
 		twoface_normals = twoface_normals/np.linalg.norm(twoface_normals,axis=1)[0]
-		# TODO The expression at the end evaluates to 0.9732489894677302
-		# This seems to be correct after checking various a-values, but
-		# geometrically I don't understand the division by 2.
 		print("Ready to compute lattice at t="+str(time.perf_counter()-starttime))
 		constraints = np.sum(np.stack(np.repeat([embedding_space
-			.reshape((-1,6))-a],30,axis=0),axis=1).dot(normallel.T)
-			* np.concatenate(np.array([twoface_normals,-twoface_normals])
-			.reshape((1,30,3))),axis=-1)
-		distance_scores = np.max(constraints,axis=1)
+			.reshape((-1,6))-a],15,axis=0),axis=1).dot(normallel.T)
+			* np.concatenate(np.array([twoface_normals])
+			.reshape((1,15,3))),axis=-1)
+		distance_scores = np.max(np.abs(constraints),axis=1)
+		# The expression at the end represents the distante to just one of the 
+		# many 2-faces which fall on the boundary when projected.
+		# It evaluates to 0.9732489894677302.
+		# This seems to be correct after checking various a-values, but
+		# geometrically I don't understand the division by 2.
+		# Explanation: "constraints" computes distance from the origin to each
+		# of the 6D points, within the parallel space, along the 30 directions
+		# perpendicular to faces of a rhombic triacontahedron (since this is 
+		# the shape of a hypercube projected into the 3D "parallel space").
+		# This is half as much as the possible distance from the projected
+		# 6D point to the plane representing one of these 30 faces, which is what
+		# I was picturing.
 		included = distance_scores < np.linalg.norm(np.array([0,0,1,-1,-1,-1]).dot(normallel.T))/2
 		included = included.reshape((esize,esize,esize,esize,esize,esize))
 		print("Latticepoints found in "+str(time.perf_counter()-starttime))
@@ -460,16 +481,29 @@ class numpylattice(MeshInstance):
 		print("Done with rendering. t="+str(time.perf_counter()-starttime))
 		
 		# Now we want to calculate the validity bounds for this chunk.
+		# Tentatively, only including vertices inside the chunk. I might want
+		# to include all vertices of blocks which overlap the chunk, but it
+		# seems like they'll be determined by the interior vertices.
+		# TODO I can easily check this later by calculating both constraint
+		# sets and comparing them.
 		relevance = np.all(np.abs((embedding_space[included].dot(worldplane.T)*multiplier 
 								- (chosen_center).dot(worldplane.T)*multiplier)
 								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
 								*(phi*phi*phi*multiplier) ))) < 0.501,axis=1)
 		relevant_points = embedding_space[included][relevance]
+		# Recalculating just because it's fast and easier than trying to get the
+		# right numbers, arranged properly, out of the old "constraints" variable.
 		constraints = np.sum(np.stack(np.repeat([relevant_points - a],30,axis=0),axis=1).dot(normallel.T)
 			* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
 		#print(np.max(constraints))
-		print(np.max(np.abs(constraints)))#0.9731908764184711 max so far
+		print("Max constraint distance: "+str(np.max(np.abs(constraints))))#0.9731908764184711 max so far
 		print("t="+str(time.perf_counter()-starttime))
+		# The intersection of all the constraints takes the minima along each of the 30 vectors.
+		overall_constraints = 0.9732489894677302 - np.max(constraints,axis=0)
+		print("Wiggle room in all 30 directions:")
+		print(overall_constraints)
+		print("Wiggle room along the 15 axes:")
+		print(overall_constraints[:15]+overall_constraints[15:])
 		# Checking an alternate inclusion criterion
 #		# TODO The expression at the end evaluates to 0.9732489894677302
 #		# This seems to be correct after checking various a-values, but
