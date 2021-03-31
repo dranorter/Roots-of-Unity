@@ -106,16 +106,13 @@ class numpylattice(MeshInstance):
 		deflated_lines = [[],[],[],[],[],[]]
 		for i in embedding_space[deflation_included]:
 			for j in embedding_space[deflation_included]:
-				#print(np.linalg.norm(i - j))
-				#print(np.sum(np.abs(i - j)))
-				#print(np.where(i - j == 2)[0].shape == (1,))
 				if np.linalg.norm(i - j) == 3:
 					if np.sum(np.abs(i - j)) == 7:
 						if np.where(i - j == 2)[0].shape == (1,):
 							deflated_lines[np.where(i - j == 2)[0][0]].append(j)
 		
+		chunks = []
 		if chosen_center is None:
-			chunks = []
 			for point in embedding_space[deflation_included]:
 				# Find dimensions in which we have a neighbor in the positive direction
 				pos_lines = set()
@@ -156,11 +153,21 @@ class numpylattice(MeshInstance):
 				== np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1).min())[0][0]]
 		print("Chose chunk "+str(chosen_center)+" second="+str(time.perf_counter()-starttime))
 		chosen_axes = 1-np.array(chosen_center - np.floor(chosen_center))*2
-		chosen_origin = chosen_center - np.array(deflation_face_axes).T.dot(1-chosen_axes)/2
+		chosen_origin = chosen_center - np.array(deflation_face_axes).T.dot(chosen_axes)/2
 		chosen_axis1 = np.array(deflation_face_axes[np.nonzero(chosen_axes)[0][0]])
 		chosen_axis2 = np.array(deflation_face_axes[np.nonzero(chosen_axes)[0][1]])
 		chosen_axis3 = np.array(deflation_face_axes[np.nonzero(chosen_axes)[0][2]])
 		
+		# Now move the chosen chunk to center stage
+		embedding_space = embedding_space - chosen_origin
+		chosen_center = chosen_center - chosen_origin
+		deflated_lines = [[l - chosen_origin for l in ll] for ll in deflated_lines]
+		all_lines = [[l - chosen_origin for l in ll] for ll in all_lines]
+		a = (a - chosen_origin).dot(squarallel)
+		chosen_origin = np.zeros(6)
+		print("Corrected offset:")
+		print(a)
+
 		blocks = np.zeros((0,6))
 		for axes in ch3:
 			ax1, ax2, ax3 = np.eye(6,dtype=np.int64)[np.nonzero(axes)[0]]
@@ -186,12 +193,12 @@ class numpylattice(MeshInstance):
 					ax123[3]:esize-1+ax123[3],ax123[4]:esize-1+ax123[4],ax123[5]:esize-1+ax123[5]])
 			nonzero = np.nonzero(np.all([r1,r2,r3,r4,r5,r6,r7,r8],axis=0))
 			blocks = np.concatenate((blocks,embedding_space[nonzero]+np.array(ax123,dtype=np.float)/2))
-		
+
 		multiplier = 4
 		array_mesh = ArrayMesh()
 		self.mesh = array_mesh
-		
-		
+
+
 		st = SurfaceTool()
 		#print("Drawing neighbor blocks next. seconds="+str(time.perf_counter()-starttime))
 		st.begin(Mesh.PRIMITIVE_LINES)
@@ -225,7 +232,7 @@ class numpylattice(MeshInstance):
 								*(phi*phi*phi*multiplier) ))) <= 0.5):
 				# Represents a voxel inside our chosen chunk
 				inside_blocks.append(block)
-				
+
 				face_origin = np.floor(block).dot(worldplane.T)*multiplier
 				face_tip = np.ceil(block).dot(worldplane.T)*multiplier
 				dir1,dir2,dir3 = np.eye(6)[np.nonzero(np.ceil(block)-np.floor(block))[0]].dot(worldplane.T)*multiplier
@@ -288,7 +295,7 @@ class numpylattice(MeshInstance):
 				* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3)))
 			,axis=2),axis=0)
 			)))
-		return (b, constraints, chosen_center, all_owned_blocks)
+		return (b, constraints, chosen_center, neighbor_blocks, inside_blocks)
 	
 	def _ready(self):
 		# TODO This needs to be rewritten to generate integer 3D coordinates
@@ -453,7 +460,7 @@ class numpylattice(MeshInstance):
 		
 		#Want to identify the blocks and chunks
 		print("Deflated lines found in "+str(time.perf_counter()-starttime))
-		blocks = np.zeros((0,6))
+		blocks = None#np.zeros((0,6))
 		for axes in ch3:
 			ax1, ax2, ax3 = np.eye(6,dtype=np.int64)[np.nonzero(axes)[0]]
 			#print([ax1,ax2,ax3])
@@ -477,7 +484,10 @@ class numpylattice(MeshInstance):
 				included[ax123[0]:esize-1+ax123[0],ax123[1]:esize-1+ax123[1],ax123[2]:esize-1+ax123[2],
 					ax123[3]:esize-1+ax123[3],ax123[4]:esize-1+ax123[4],ax123[5]:esize-1+ax123[5]])
 			nonzero = np.nonzero(np.all([r1,r2,r3,r4,r5,r6,r7,r8],axis=0))
-			blocks = np.concatenate((blocks,embedding_space[nonzero]+np.array(ax123,dtype=np.float)/2))
+			if blocks is None:
+				blocks = embedding_space[nonzero]+np.array(ax123,dtype=np.float)/2
+			else:
+				blocks = np.concatenate((blocks,embedding_space[nonzero]+np.array(ax123,dtype=np.float)/2))
 #			for block in embedding_space[nonzero]:
 #				blocks.append(block+np.array(ax123,dtype=np.float)/2)
 		print("Found "+str(len(blocks))+" blocks. t="+str(time.perf_counter()-starttime))
@@ -525,11 +535,27 @@ class numpylattice(MeshInstance):
 		#chosen_center = np.array([0.5, 1.5, 0.,  0.,  1.5, 1. ])
 		print("Chose chunk "+str(chosen_center)+" second="+str(time.perf_counter()-starttime))
 		chosen_axes = 1-np.array(chosen_center - np.floor(chosen_center))*2
-		chosen_origin = chosen_center - np.array(deflation_face_axes).T.dot(1-chosen_axes)/2
+		chosen_origin = chosen_center - np.array(deflation_face_axes).T.dot(chosen_axes)/2
 		chosen_axis1 = np.array(deflation_face_axes[np.nonzero(chosen_axes)[0][0]])
 		chosen_axis2 = np.array(deflation_face_axes[np.nonzero(chosen_axes)[0][1]])
 		chosen_axis3 = np.array(deflation_face_axes[np.nonzero(chosen_axes)[0][2]])
 		
+		# Now move the chosen chunk to center stage
+		print("Chosen chunk corner (will be sent to origin)"+str(chosen_origin))
+		print("First element of lines list:"+str(all_lines[0][0]))
+		print("First element of chunk lines list:"+str(deflated_lines[0][0]))
+		embedding_space = embedding_space - chosen_origin
+		chosen_center = chosen_center - chosen_origin
+		chunks = np.array(chunks) - chosen_origin
+		blocks = blocks - chosen_origin
+		deflated_lines = [[l - chosen_origin for l in ll] for ll in deflated_lines]
+		all_lines = [[l - chosen_origin for l in ll] for ll in all_lines]
+		a = (a - chosen_origin).dot(squarallel)
+		chosen_origin = np.zeros(6)
+		print("Corrected offset:")
+		print(a)
+		print("New first element of lines list:"+str(all_lines[0][0]))
+		print("New first element of chunk lines list:"+str(deflated_lines[0][0]))
 		
 		multiplier = 4
 		array_mesh = ArrayMesh()
@@ -795,53 +821,56 @@ class numpylattice(MeshInstance):
 		clean_test = True
 		failures = 0
 		seeds = 10
-		repetitions = 4
-		for i in range(seeds):
-			print()
-			print("New seed:")
-			#b = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
-			b, overall_constraints, chosen_center, resulting_blocks = self.chunk_test()
-			for j in range(repetitions):
-				wiggle_room = overall_constraints[:15]+overall_constraints[15:]
-				b, new_constraints, new_center, new_blocks = self.chunk_test(b,chosen_center,constraints=overall_constraints)
-				old_block_set = set()
-				new_block_set = set()
-				for point in resulting_blocks:
-					old_block_set.add(repr(list(point)))
-				for point in new_blocks:
-					new_block_set.add(repr(list(point)))
-				if old_block_set != new_block_set:
-					# Yes, I refer to nonexistent variables in this block.
-					# Block seems unreachable at present, and I may switch
-					# back to testing points instead of blocks if I decide
-					# to figure out why that test was failing.
-					clean_test = False
-					print("Warning, new points!")
-					new_points_ndarrays = []
-					for string in list(new_point_set - new_point_set.intersection(old_point_set)):
-						new_points_ndarrays.append(np.array(eval(string)))
-					print("Closest new point to chunk: "
-						+str(np.min(np.abs((
-							np.array(new_points_ndarrays)
-								.dot(worldplane.T)*multiplier 
-								- (chosen_center).dot(worldplane.T)*multiplier)
-								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
-								*(phi*phi*phi*multiplier) ))))))
-					print("Novel points:"+str(len(new_point_set - new_point_set.intersection(old_point_set)))+"/"+str(len(new_point_set)))
-					print(new_point_set - new_point_set.intersection(old_point_set))
-					if len(old_point_set - old_point_set.intersection(new_point_set)) > 0:
-						failures += 1
-						print("Missing points: "+str(len(old_point_set 
-							- old_point_set.intersection(new_point_set)))+"/"+str(len(old_point_set)))
-				else:
-					# We want to save the chunk.
-					pass
-		if clean_test:
-			print("Constraints seem very solid!")
-		if not clean_test and failures == 0:
-			print("Constraints were OK on existing points, but didn't constrain possible new points")
-		if failures > 1:
-			print("Test failed "+str(failures)+" times out of "+str(seeds*repetitions)+".")
+		repetitions = 0
+		if False:#not Engine.editor_hint:
+			for i in range(seeds):
+				print()
+				print("New seed:")
+				b, overall_constraints, chosen_center, resulting_neighbor_blocks, resulting_interior_blocks = self.chunk_test()
+				resulting_blocks = resulting_neighbor_blocks + resulting_interior_blocks
+				for j in range(repetitions):
+					wiggle_room = overall_constraints[:15]+overall_constraints[15:]
+					b, new_constraints, new_center, new_neighbor_blocks, new_interior_blocks = self.chunk_test(
+						b,chosen_center,constraints=overall_constraints)
+					new_blocks = new_neighbor_blocks + new_interior_blocks
+					old_block_set = set()
+					new_block_set = set()
+					for point in resulting_blocks:
+						old_block_set.add(repr(list(point)))
+					for point in new_blocks:
+						new_block_set.add(repr(list(point)))
+					if old_block_set != new_block_set:
+						# Yes, I refer to nonexistent variables in this block.
+						# Block seems unreachable at present, and I may switch
+						# back to testing points instead of blocks if I decide
+						# to figure out why that test was failing.
+						clean_test = False
+						print("Warning, new points!")
+						new_points_ndarrays = []
+						for string in list(new_point_set - new_point_set.intersection(old_point_set)):
+							new_points_ndarrays.append(np.array(eval(string)))
+						print("Closest new point to chunk: "
+							+str(np.min(np.abs((
+								np.array(new_points_ndarrays)
+									.dot(worldplane.T)*multiplier 
+									- (chosen_center).dot(worldplane.T)*multiplier)
+									.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
+									*(phi*phi*phi*multiplier) ))))))
+						print("Novel points:"+str(len(new_point_set - new_point_set.intersection(old_point_set)))+"/"+str(len(new_point_set)))
+						print(new_point_set - new_point_set.intersection(old_point_set))
+						if len(old_point_set - old_point_set.intersection(new_point_set)) > 0:
+							failures += 1
+							print("Missing points: "+str(len(old_point_set 
+								- old_point_set.intersection(new_point_set)))+"/"+str(len(old_point_set)))
+					else:
+						# We want to save the chunk.
+						pass
+			if clean_test:
+				print("Constraints seem very solid!")
+			if not clean_test and failures == 0:
+				print("Constraints were OK on existing points, but didn't constrain possible new points")
+			if failures > 1:
+				print("Test failed "+str(failures)+" times out of "+str(seeds*repetitions)+".")
 		print("t="+str(time.perf_counter()-starttime))
 		
 		# We now have all the constraints for identifying when to use this chunk template.
@@ -889,6 +918,38 @@ class numpylattice(MeshInstance):
 		# adjustment to a, and then whatever range of a-values results can be
 		# our set of canonical values for a. (Hopefully there's a good way to
 		# keep them in one cube.)
+		
+		repetitions = 1
+		all_constraints = []
+		if not Engine.editor_hint:
+			bb = a
+			for i in range(repetitions):
+				(bb, relative_constraints, chosen_center, neighbor_blocks, interior_blocks) = self.chunk_test(bb)
+				# We can't use the raw constraints since they're centered on b; we need a shape
+				# relative to the origin.
+				# Simply translating them by the proper amount is a bit confusing;
+				# in a given direction, starting from a pair like (0.1, 0.1) 
+				# which means we've got a margin of 0.1 on both sides, we might 
+				# translate it to something like (5.1,-4.9), which would mean
+				# we need to be between 5.1 in the positive direction and -4.9 in
+				# the negative direction -- IE, between 5.1 and 5.9 overall. So
+				# we negate the "negative direction" values and then arrange
+				# the whole thing in 15 pairs.
+				# Translate
+				constraints = relative_constraints + np.concatenate([twoface_normals,-twoface_normals]).dot(bb.dot(normallel.T))
+				# Negate and pair
+				constraints = (constraints * np.concatenate([np.ones(15),-np.ones(15)])).reshape((2,15)).T
+				all_constraints.append(constraints)
+				
+				# Testing that we know how to match constraints properly
+				bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
+				bb = bb*2 - 1
+				bb = bb.dot(squarallel)
+				while not (np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraints[:,0] )
+								and np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraints[:,1])):
+					bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
+					bb = bb.dot(squarallel)
+			print(all_constraints)
 """
 [-0.09034036  0.04535047 -0.11384384  0.28502651  0.18663901  0.20116496]
 Chose chunk [0.  0.5 0.  0.  0.5 0.5] second=2.5996314999999868
