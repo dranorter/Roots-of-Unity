@@ -862,7 +862,32 @@ class numpylattice(MeshInstance):
 		# recursively, this would just result in endless expansion outwards; and obviously
 		# these new chunks don't have novel configurations. So then, what's the right 
 		# mapping from arbitrary (a, chosen_center) pairs to a canonical set of
-		# chosen_center values?
+		# chosen_center values? Well - starting with truly arbitrary pairs, we can
+		# reduce each coordinate of a to be within a unit interval centered on the
+		# origin; adding or subtracting 1 from both a and chosen_center at the same
+		# time doesn't affect the shape. However, in order for our chunk finding 
+		# algorithm to work, we restrict a to be perpendicular to the worldplane.
+		# This means that rather than just moving a by unit amounts, we actually
+		# must first move it by the unit and then slide it along the worldplane
+		# to the new closest point to the origin. This changes 3D coordinates of
+		# blocks and chunks, but not their 6D coordinates, so the appropriate
+		# chosen_center value is only changed by the first part of the motion.
+		# The best way of thinking of this combined motion is, we move the whole
+		# worldplane by an integer amount, and this changes the value of "a" in
+		# accordance with the worldplane's change in distance from the origin.
+		# If we have integer vectors which are approximately parallel to the 
+		# worldplane, we can move the worldplane by that amount with relatively
+		# little change in the value of a. But, the lattice itself is a rich
+		# source of such vectors. This means that if we restrict a to fall in a
+		# particular unit cube, we still can translate most (or at least many)
+		# points included in our lattice between one another. So a good 
+		# canonical choice of chunk templates might, say, ensure that [0,0,0,
+		# 0,0,0] is a corner of every chunk, or maybe arrange the chunk centers
+		# around the origin in a specific symmetrical way. And really, we can
+		# just move the chosen chunk to its assigned place, make the necessary
+		# adjustment to a, and then whatever range of a-values results can be
+		# our set of canonical values for a. (Hopefully there's a good way to
+		# keep them in one cube.)
 """
 [-0.09034036  0.04535047 -0.11384384  0.28502651  0.18663901  0.20116496]
 Chose chunk [0.  0.5 0.  0.  0.5 0.5] second=2.5996314999999868
