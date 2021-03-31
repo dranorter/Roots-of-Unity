@@ -835,6 +835,7 @@ class numpylattice(MeshInstance):
 							- old_point_set.intersection(new_point_set)))+"/"+str(len(old_point_set)))
 				else:
 					# We want to save the chunk.
+					pass
 		if clean_test:
 			print("Constraints seem very solid!")
 		if not clean_test and failures == 0:
