@@ -655,25 +655,8 @@ class numpylattice(MeshInstance):
 				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir2)
 		st.commit(self.mesh)
 		self.mesh.surface_set_material(1,COLOR)
-#		st.begin(Mesh.PRIMITIVE_LINES)
-#
-#		for dim in range(6):
-#			basis_element = np.zeros(6)
-#			basis_element[dim] = 1
-#			offset = basis_element.dot(worldplane.T)
-#			for line in all_lines[dim]:
-#				# Test if inside chosen chunk
-#				point1 = line.dot(worldplane.T)
-#				point2 = point1 + offset
-#				point1 *= multiplier
-#				point2 *= multiplier
-#				if np.all(np.abs((np.array([point1,point2]) - (chosen_center).dot(worldplane.T)*multiplier)
-#								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
-#								*(phi*phi*phi*multiplier) ))) < 0.501):
-#					st.add_vertex(Vector3(point1[0],point1[1],point1[2]))
-#					st.add_vertex(Vector3(point2[0],point2[1],point2[2]))
-#
-#		st.commit(self.mesh)
+		
+		# Draw the boundaries of the chunk itself.
 		
 		st.begin(Mesh.PRIMITIVE_LINES)
 		
@@ -919,12 +902,16 @@ class numpylattice(MeshInstance):
 		# our set of canonical values for a. (Hopefully there's a good way to
 		# keep them in one cube.)
 		
-		repetitions = 1
+		repetitions = 4
 		all_constraints = []
+		all_blocks = []
+		all_chunks = []
+		all_counters = []
 		if not Engine.editor_hint:
 			bb = a
 			for i in range(repetitions):
-				(bb, relative_constraints, chosen_center, neighbor_blocks, interior_blocks) = self.chunk_test(bb)
+				b = bb.copy()
+				(bb, relative_constraints, chosen_center, neighbor_blocks, interior_blocks) = self.chunk_test(bb,chosen_center)
 				# We can't use the raw constraints since they're centered on b; we need a shape
 				# relative to the origin.
 				# Simply translating them by the proper amount is a bit confusing;
@@ -935,21 +922,45 @@ class numpylattice(MeshInstance):
 				# the negative direction -- IE, between 5.1 and 5.9 overall. So
 				# we negate the "negative direction" values and then arrange
 				# the whole thing in 15 pairs.
-				# Translate
-				constraints = relative_constraints + np.concatenate([twoface_normals,-twoface_normals]).dot(bb.dot(normallel.T))
-				# Negate and pair
-				constraints = (constraints * np.concatenate([np.ones(15),-np.ones(15)])).reshape((2,15)).T
+				constraints = (relative_constraints*np.concatenate([-np.ones(15),np.ones(15)]) 
+					+ np.concatenate([twoface_normals,twoface_normals]).dot(b.dot(normallel.T)))
+				constraints = (constraints).reshape((2,15)).T
 				all_constraints.append(constraints)
 				
+				# Save the chunk info
+				all_chunks.append(str((chosen_center, interior_blocks, neighbor_blocks)))
+				
 				# Testing that we know how to match constraints properly
-				bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
-				bb = bb*2 - 1
-				bb = bb.dot(squarallel)
-				while not (np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraints[:,0] )
-								and np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraints[:,1])):
+				# The suggested value, bb, should fall within the constraints.
+				print("Did the suggested value fall in its constraints? "+str(not
+					np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((b-bb).dot(normallel.T)) > relative_constraints)))
+				print("Was my algebra correct? "+str(
+					np.all(twoface_normals.dot(bb.dot(normallel.T)) > -relative_constraints[:15] + twoface_normals.dot(b.dot(normallel.T))) and
+					np.all(twoface_normals.dot(bb.dot(normallel.T)) < relative_constraints[15:] + twoface_normals.dot(b.dot(normallel.T)))))
+				print(str(constraints[:,0] + relative_constraints[:15] - twoface_normals.dot(b.dot(normallel.T))))
+				print("Does our while loop use a valid test? "+
+					str(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraints[:,0] )
+								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraints[:,1])))
+				
+				# Generate chunks
+				counter = 0
+				upper_limit = 100000
+				while np.any([(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraint[:,0] )
+								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraint[:,1])) 
+								for constraint in all_constraints]) and counter < upper_limit:
 					bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
+					#bb = bb*2 - 1
 					bb = bb.dot(squarallel)
-			print(all_constraints)
+					counter = counter + 1
+				if counter == upper_limit:
+					print("Loop overran its limit at attempt #"+str(i+1))
+					break
+				all_counters.append(counter)
+			#print(all_constraints)
+			print(str(len(all_chunks))+" chunk layouts generated. Repeats:")
+			print(len(all_chunks)-len(set(all_chunks)))
+			print("Max loops required: "+str(max(all_counters)))
+			print(all_counters)
 """
 [-0.09034036  0.04535047 -0.11384384  0.28502651  0.18663901  0.20116496]
 Chose chunk [0.  0.5 0.  0.  0.5 0.5] second=2.5996314999999868
