@@ -706,6 +706,10 @@ class numpylattice(MeshInstance):
 		print("t="+str(time.perf_counter()-starttime))
 		# The intersection of all the constraints takes the minima along each of the 30 vectors.
 		overall_constraints = 0.9732489894677302 - np.max(constraints,axis=0)
+		
+		# Need to do a similar calculation for chunk corners, but with tighter constraints.
+		
+		
 		print("Wiggle room in all 30 directions:")
 		print(overall_constraints)
 		print("Wiggle room along the 15 axes:")
@@ -902,7 +906,7 @@ class numpylattice(MeshInstance):
 		# our set of canonical values for a. (Hopefully there's a good way to
 		# keep them in one cube.)
 		
-		repetitions = 4
+		repetitions = 400
 		all_constraints = []
 		all_blocks = []
 		all_chunks = []
@@ -911,7 +915,7 @@ class numpylattice(MeshInstance):
 			bb = a
 			for i in range(repetitions):
 				b = bb.copy()
-				(bb, relative_constraints, chosen_center, neighbor_blocks, interior_blocks) = self.chunk_test(bb,chosen_center)
+				(bb, relative_constraints, chosen_center, neighbor_blocks, interior_blocks) = self.chunk_test(bb)#,chosen_center)
 				# We can't use the raw constraints since they're centered on b; we need a shape
 				# relative to the origin.
 				# Simply translating them by the proper amount is a bit confusing;
@@ -929,18 +933,29 @@ class numpylattice(MeshInstance):
 				
 				# Save the chunk info
 				all_chunks.append(str((chosen_center, interior_blocks, neighbor_blocks)))
+				all_blocks.append(str((interior_blocks,neighbor_blocks)))
 				
+				weirdness = False
+				if np.any(np.concatenate([twoface_normals,-twoface_normals]).dot(np.zeros(6).dot(normallel.T)) > relative_constraints):
+					print("Relative constraints didn't contain the point that generated them; some must've been negative.")
+					weirdness = True
+				if (not np.all(twoface_normals.dot(b.dot(normallel.T)) > constraints[:,0] )
+								and np.all(twoface_normals.dot(b.dot(normallel.T)) < constraints[:,1])):
+					print("Translated constraints didn't contain the point that generated them!!")
+					weirdness = True
+				if weirdness:
+					break
 				# Testing that we know how to match constraints properly
 				# The suggested value, bb, should fall within the constraints.
-				print("Did the suggested value fall in its constraints? "+str(not
-					np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((b-bb).dot(normallel.T)) > relative_constraints)))
-				print("Was my algebra correct? "+str(
-					np.all(twoface_normals.dot(bb.dot(normallel.T)) > -relative_constraints[:15] + twoface_normals.dot(b.dot(normallel.T))) and
-					np.all(twoface_normals.dot(bb.dot(normallel.T)) < relative_constraints[15:] + twoface_normals.dot(b.dot(normallel.T)))))
-				print(str(constraints[:,0] + relative_constraints[:15] - twoface_normals.dot(b.dot(normallel.T))))
-				print("Does our while loop use a valid test? "+
-					str(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraints[:,0] )
-								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraints[:,1])))
+#				print("Did the suggested value fall in its constraints? "+str(not
+#					np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((b-bb).dot(normallel.T)) > relative_constraints)))
+#				print("Was my algebra correct? "+str(
+#					np.all(twoface_normals.dot(bb.dot(normallel.T)) > -relative_constraints[:15] + twoface_normals.dot(b.dot(normallel.T))) and
+#					np.all(twoface_normals.dot(bb.dot(normallel.T)) < relative_constraints[15:] + twoface_normals.dot(b.dot(normallel.T)))))
+#				print(str(constraints[:,0] + relative_constraints[:15] - twoface_normals.dot(b.dot(normallel.T))))
+#				print("Does our while loop use a valid test? "+
+#					str(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraints[:,0] )
+#								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraints[:,1])))
 				
 				# Generate chunks
 				counter = 0
@@ -957,10 +972,17 @@ class numpylattice(MeshInstance):
 					break
 				all_counters.append(counter)
 			#print(all_constraints)
+			print("t="+str(time.perf_counter()-starttime))
 			print(str(len(all_chunks))+" chunk layouts generated. Repeats:")
 			print(len(all_chunks)-len(set(all_chunks)))
+			print(str(len(set(all_blocks)))+" unique layouts.")#1419 unique layouts.
 			print("Max loops required: "+str(max(all_counters)))
-			print(all_counters)
+			all_counters = np.array(all_counters)
+			print(all_counters.mean())
+#			print(np.concatenate([all_counters[:100].mean(),all_counters[100:200].mean(),
+#				all_counters[200:300].mean(),all_counters[300:400].mean(),all_counters[400:500].mean(),
+#				all_counters[500:600].mean(),all_counters[600:700].mean(),all_counters[700:800].mean()
+#			]))
 """
 [-0.09034036  0.04535047 -0.11384384  0.28502651  0.18663901  0.20116496]
 Chose chunk [0.  0.5 0.  0.  0.5 0.5] second=2.5996314999999868
