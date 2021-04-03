@@ -49,7 +49,7 @@ class numpylattice(MeshInstance):
 								[ 1, 2, 1,-1, 1, 1],
 								[ 1, 1, 2, 1,-1, 1],
 								[ 1,-1, 1, 2,-1,-1],
-								[ 1, 1,-1,-1, 2, 1],
+								[ 1, 1,-1,-1, 2, -1],
 								[-1, 1, 1,-1,-1, 2]]
 		ch3 = [[1,1,1,0,0,0],[1,1,0,1,0,0],[1,1,0,0,1,0],[1,1,0,0,0,1],[1,0,1,1,0,0],[1,0,1,0,1,0],
 						[1,0,1,0,0,1],[1,0,0,1,1,0],[1,0,0,1,0,1],[1,0,0,0,1,1],[0,1,1,1,0,0],[0,1,1,0,1,0],
@@ -261,8 +261,21 @@ class numpylattice(MeshInstance):
 		# The intersection of all the constraints takes the minima along each of the 30 vectors.
 		#if constraints is None:
 		constraints = 0.9732489894677302 - np.max(dists,axis=0)
-		print("Wiggle room in all 30 directions:")
-		print(constraints)
+		
+		# Need to do a similar calculation for chunk corners, but with tighter constraints.
+		chunk_corners = np.array([chosen_origin,
+			chosen_origin+chosen_axis1,chosen_origin+chosen_axis2,chosen_origin+chosen_axis3,
+			chosen_origin+chosen_axis1+chosen_axis2,chosen_origin+chosen_axis1+chosen_axis3,chosen_origin+chosen_axis2+chosen_axis3,
+			chosen_origin+chosen_axis1+chosen_axis2+chosen_axis3])
+		chunk_dists = np.sum(np.stack(np.repeat([chunk_corners - a],30,axis=0),axis=1).dot(normallel.T)
+			* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
+		print("Max chunk constraint distance: "+str(np.max(np.abs(chunk_dists))))
+		overall_chunk_constraints = 0.9732489894677302/(phi*phi*phi) - np.max(chunk_dists,axis=0)
+		
+		constraints = np.min([constraints,overall_chunk_constraints],axis=0)
+		
+		#print("Wiggle room in all 30 directions:")
+		#print(constraints)
 		print("Wiggle room along the 15 axes:")
 		print(constraints[:15]+constraints[15:])
 		print("Proposed new point inside the constraints:")
@@ -304,7 +317,7 @@ class numpylattice(MeshInstance):
 		phi = 1.61803398874989484820458683
 		# Set up a 6D array holding 6-vectors which are their own coords
 		# w/in the array
-		esize = 10
+		esize = 12
 		offset = -5
 		#embedding_space = np.zeros((esize,esize,esize,esize,esize,esize,6),dtype=np.int8)
 		print("Creating embedding space; t="+str(time.perf_counter()-starttime))
@@ -319,9 +332,9 @@ class numpylattice(MeshInstance):
 		#a = np.array([5.1+phi/8,5.2+phi/8,5.3,5.4,5.5,5.6])
 		a = np.array([0.1201,0.61102,0.1003,0.60904,0.0805,0.60706])
 		a -= np.array([0.26201,0.0611,0.15003,0.16094,0.12805,0.20706])
-		a = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
-		a = np.array([-0.16913145,  0.04060133, -0.33081354,  0.76832666,  0.53877964,  0.63870467])
-		a = np.array([-0.0441522,  -0.09743448, -0.38699097,  0.79503878,  0.61608302,  0.82796904])
+		a = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])*2 -1
+		#a = np.array([-0.16913145,  0.04060133, -0.33081354,  0.76832666,  0.53877964,  0.63870467])
+		#a = np.array([-0.0441522,  -0.09743448, -0.38699097,  0.79503878,  0.61608302,  0.82796904])
 		# The basis for the worldplane
 		worldplane = np.array([[phi,0,1,phi,0,-1],[1,phi,0,-1,phi,0],[0,1,phi,0,-1,phi]])
 		normalworld = worldplane / np.linalg.norm(worldplane[0])
@@ -347,11 +360,12 @@ class numpylattice(MeshInstance):
 							  [-1,-1,1, 2, 1, 1],
 							  [1,-1,-1, 1, 2, 1],
 							  [1, 1, 1, 1, 1, 2]])
+		
 		deflation_face_axes = [ [ 2, 1, 1, 1, 1,-1],
 								[ 1, 2, 1,-1, 1, 1],
 								[ 1, 1, 2, 1,-1, 1],
 								[ 1,-1, 1, 2,-1,-1],
-								[ 1, 1,-1,-1, 2, 1],
+								[ 1, 1,-1,-1, 2, -1],
 								[-1, 1, 1,-1,-1, 2]]
 		
 		
@@ -405,6 +419,8 @@ class numpylattice(MeshInstance):
 			])
 		twoface_normals = np.cross(twoface_projected[:,0],twoface_projected[:,1])
 		twoface_normals = twoface_normals/np.linalg.norm(twoface_normals,axis=1)[0]
+		
+		
 		print("Ready to compute lattice at t="+str(time.perf_counter()-starttime))
 		constraints = np.sum(np.stack(np.repeat([embedding_space
 			.reshape((-1,6))-a],15,axis=0),axis=1).dot(normallel.T)
@@ -448,6 +464,8 @@ class numpylattice(MeshInstance):
 		# Deflated lines are of distance 3 apart, having a distance of 1 in five
 		# of their coordinates and a distance of 2 in one of them.
 		deflated_lines = [[],[],[],[],[],[]]
+		nonstandard_deflated_lines = set()
+		standard_deflated_lines = set()
 		for i in embedding_space[deflation_included]:
 			for j in embedding_space[deflation_included]:
 				#print(np.linalg.norm(i - j))
@@ -457,6 +475,10 @@ class numpylattice(MeshInstance):
 					if np.sum(np.abs(i - j)) == 7:
 						if np.where(i - j == 2)[0].shape == (1,):
 							deflated_lines[np.where(i - j == 2)[0][0]].append(j)
+							standard_deflated_lines.add(str(i-j))
+						else:
+							nonstandard_deflated_lines.add(str(i-j))
+		print("Might-be lines: "+str(nonstandard_deflated_lines)+"\n"+str(standard_deflated_lines))
 		
 		#Want to identify the blocks and chunks
 		print("Deflated lines found in "+str(time.perf_counter()-starttime))
@@ -528,9 +550,13 @@ class numpylattice(MeshInstance):
 		
 		# Choose a chunk near origin
 		deflation_faces = np.array(chunks)
-		chosen_center = deflation_faces[
+		near_centers = deflation_faces[
 			np.where(np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1)
-			== np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1).min())[0][0]]
+			< 8)[0]]
+		chosen_center = near_centers[r.randint(0,near_centers.shape[0]-1)]
+#		chosen_center = deflation_faces[
+#			np.where(np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1)
+#			== np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1).min())[0][0]]
 		#Rigging the process
 		#chosen_center = np.array([0.5, 1.5, 0.,  0.,  1.5, 1. ])
 		print("Chose chunk "+str(chosen_center)+" second="+str(time.perf_counter()-starttime))
@@ -708,7 +734,16 @@ class numpylattice(MeshInstance):
 		overall_constraints = 0.9732489894677302 - np.max(constraints,axis=0)
 		
 		# Need to do a similar calculation for chunk corners, but with tighter constraints.
+		chunk_corners = np.array([chosen_origin,
+			chosen_origin+chosen_axis1,chosen_origin+chosen_axis2,chosen_origin+chosen_axis3,
+			chosen_origin+chosen_axis1+chosen_axis2,chosen_origin+chosen_axis1+chosen_axis3,chosen_origin+chosen_axis2+chosen_axis3,
+			chosen_origin+chosen_axis1+chosen_axis2+chosen_axis3])
+		chunk_constraints = np.sum(np.stack(np.repeat([chunk_corners - a],30,axis=0),axis=1).dot(normallel.T)
+			* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
+		print("Max chunk constraint distance: "+str(np.max(np.abs(chunk_constraints))))
+		overall_chunk_constraints = 0.9732489894677302/(phi*phi*phi) - np.max(chunk_constraints,axis=0)
 		
+		overall_constraints = np.min([overall_constraints,overall_chunk_constraints],axis=0)
 		
 		print("Wiggle room in all 30 directions:")
 		print(overall_constraints)
@@ -906,11 +941,32 @@ class numpylattice(MeshInstance):
 		# our set of canonical values for a. (Hopefully there's a good way to
 		# keep them in one cube.)
 		
-		repetitions = 400
+		# TODO As said above, the offset alone doesn't specify a chunk layout,
+		# we need to combine it with a choice of chosen_center. So we need to 
+		# store constraints as a pair, constraints plus chosen_center. And we
+		# already successfully reduce the possible chosen_center values to a set
+		# of just 20. I could, for each of those, kinda pre-generate the 
+		# constraints for that particular chunk to actually exist in a grid.
+		# Then, each loop of the test should hand chunk_test a specific chosen_center,
+		# along with an offset value which falls within the constraints allowing that
+		# center to correspond with an actual chunk. If floats are accurate enough
+		# for present purposes, that should allow us to pass the test. If not,
+		# writing custom ndarray containers is looking pretty straightforward.
+		possible_centers = {'[0.5 0.5 0.5 0.  0.  0. ]', '[ 0.5  0.5  2.   1.  -1.5  1. ]', '[ 0.5  1.   1.5  0.  -0.5  1. ]', 
+			'[ 0.5  1.5  1.  -0.5  0.   1. ]', '[ 0.5  2.   0.5 -1.5  1.   1. ]', '[ 0.5  2.   2.  -0.5 -0.5  2. ]', 
+			'[ 1.   0.5  1.5  1.  -0.5  0. ]', '[ 1.   1.5  2.   0.5 -0.5  1. ]', '[ 1.   1.5  0.5 -0.5  1.   0. ]', 
+			'[ 1.   2.   1.5 -0.5  0.5  1. ]', '[ 1.5  0.5  1.   1.   0.  -0.5]', '[ 1.5  1.   0.5  0.   1.  -0.5]', 
+			'[ 1.5  1.   2.   1.  -0.5  0.5]', '[ 1.5  2.   1.  -0.5  1.   0.5]', '[ 2.   0.5  0.5  1.   1.  -1.5]', 
+			'[ 2.   0.5  2.   2.  -0.5 -0.5]', '[ 2.   1.   1.5  1.   0.5 -0.5]', '[ 2.   1.5  1.   0.5  1.  -0.5]', 
+			'[ 2.   2.   0.5 -0.5  2.  -0.5]', '[2.  2.  2.  0.5 0.5 0.5]',  }
+		
+		repetitions = 80
 		all_constraints = []
 		all_blocks = []
 		all_chunks = []
 		all_counters = []
+		all_chosen_centers = []
+		all_block_axes = []
 		if not Engine.editor_hint:
 			bb = a
 			for i in range(repetitions):
@@ -934,6 +990,9 @@ class numpylattice(MeshInstance):
 				# Save the chunk info
 				all_chunks.append(str((chosen_center, interior_blocks, neighbor_blocks)))
 				all_blocks.append(str((interior_blocks,neighbor_blocks)))
+				all_chosen_centers.append(str(chosen_center))
+				for block in interior_blocks:
+					all_block_axes.append(str(block - np.floor(block)))
 				
 				weirdness = False
 				if np.any(np.concatenate([twoface_normals,-twoface_normals]).dot(np.zeros(6).dot(normallel.T)) > relative_constraints):
@@ -956,13 +1015,16 @@ class numpylattice(MeshInstance):
 #				print("Does our while loop use a valid test? "+
 #					str(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraints[:,0] )
 #								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraints[:,1])))
+				bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
+				bb = bb*4 - 2
+				bb = bb.dot(squarallel)
 				
 				# Generate chunks
 				counter = 0
 				upper_limit = 100000
-				while np.any([(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraint[:,0] )
-								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraint[:,1])) 
-								for constraint in all_constraints]) and counter < upper_limit:
+				while False:#np.any([(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraint[:,0] )
+					#			and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraint[:,1])) 
+					#			for constraint in all_constraints]) and counter < upper_limit:
 					bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
 					#bb = bb*2 - 1
 					bb = bb.dot(squarallel)
@@ -979,6 +1041,17 @@ class numpylattice(MeshInstance):
 			print("Max loops required: "+str(max(all_counters)))
 			all_counters = np.array(all_counters)
 			print(all_counters.mean())
+			#print(set(all_chosen_centers))
+			#print(set(all_block_axes))
+#{'[ 0.5  2.   2.  -0.5 -0.5  2. ]', '[ 1.   1.5  2.   0.5 -0.5  1. ]', '[2.  2.  2.  0.5 0.5 0.5]', '[ 1.   2.   1.5 -0.5  0.5  1. ]', '[ 1.   0.5  1.5  1.  -0.5  0. ]', '[ 0.5  1.   1.5  0.  -0.5  1. ]', '[ 1.5  1.   2.   1.  -0.5  0.5]', '[ 2.   0.5  2.   2.  -0.5 -0.5]', '[ 2.   1.   1.5  1.   0.5 -0.5]', '[ 0.5  0.5  2.   1.  -1.5  1. ]'}
+#{'[ 1.   0.5  1.5  1.  -0.5  0. ]', '[2.  2.  2.  0.5 0.5 0.5]', '[ 0.5  1.   1.5  0.  -0.5  1. ]', '[ 1.   2.   1.5 -0.5  0.5  1. ]', '[ 2.   1.   1.5  1.   0.5 -0.5]', '[ 0.5  2.   2.  -0.5 -0.5  2. ]', '[ 2.   0.5  2.   2.  -0.5 -0.5]', '[ 0.5  0.5  2.   1.  -1.5  1. ]', '[ 1.   1.5  2.   0.5 -0.5  1. ]', '[ 1.5  1.   2.   1.  -0.5  0.5]'}
+#{'[0.5 0.5 0.5 0.  0.  0. ]', '[ 0.5  0.5  2.   1.  -1.5  1. ]', '[ 0.5  1.   1.5  0.  -0.5  1. ]', 
+#'[ 0.5  1.5  1.  -0.5  0.   1. ]', '[ 0.5  2.   0.5 -1.5  1.   1. ]', #'[ 0.5  2.   2.  -0.5 -0.5  2. ]', 
+#'[ 1.   0.5  1.5  1.  -0.5  0. ]', '[ 1.   1.5  2.   0.5 -0.5  1. ]', '[ 1.   1.5  0.5 -0.5  1.   0. ]', 
+#'[ 1.   2.   1.5 -0.5  0.5  1. ]', '[ 1.5  0.5  1.   1.   0.  -0.5]', '[ 1.5  1.   0.5  0.   1.  -0.5]', 
+#'[ 1.5  1.   2.   1.  -0.5  0.5]', '[ 1.5  2.   1.  -0.5  1.   0.5]', '[ 2.   0.5  0.5  1.   1.  -1.5]', 
+#'[ 2.   0.5  2.   2.  -0.5 -0.5]',  '[ 2.   1.   1.5  1.   0.5 -0.5]', '[ 2.   1.5  1.   0.5  1.  -0.5]', 
+#'[ 2.   2.   0.5 -0.5  2.  -0.5]', '[2.  2.  2.  0.5 0.5 0.5]',  }
 #			print(np.concatenate([all_counters[:100].mean(),all_counters[100:200].mean(),
 #				all_counters[200:300].mean(),all_counters[300:400].mean(),all_counters[400:500].mean(),
 #				all_counters[500:600].mean(),all_counters[600:700].mean(),all_counters[700:800].mean()
@@ -1110,3 +1183,9 @@ Novel points:18/1913
 '[3, -3, -1, 4, 1, -3]', '[1, 4, 1, -2, 4, 3]'}
 
 """
+#class GoldenField:
+#	def __init__(self, shape):
+#		self.ndarray = 
+#
+#	def __repr__(self):
+#		return f"{self.__class__.__name__}()
