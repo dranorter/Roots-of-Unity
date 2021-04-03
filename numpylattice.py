@@ -958,20 +958,53 @@ class numpylattice(MeshInstance):
 			'[ 1.   2.   1.5 -0.5  0.5  1. ]', '[ 1.5  0.5  1.   1.   0.  -0.5]', '[ 1.5  1.   0.5  0.   1.  -0.5]', 
 			'[ 1.5  1.   2.   1.  -0.5  0.5]', '[ 1.5  2.   1.  -0.5  1.   0.5]', '[ 2.   0.5  0.5  1.   1.  -1.5]', 
 			'[ 2.   0.5  2.   2.  -0.5 -0.5]', '[ 2.   1.   1.5  1.   0.5 -0.5]', '[ 2.   1.5  1.   0.5  1.  -0.5]', 
-			'[ 2.   2.   0.5 -0.5  2.  -0.5]', '[2.  2.  2.  0.5 0.5 0.5]',  }
+			'[ 2.   2.   0.5 -0.5  2.  -0.5]', '[2.  2.  2.  0.5 0.5 0.5]'}
+		possible_centers_live = np.array([[0.5, 0.5, 0.5,0.,0.,0.],[0.5,0.5,2., 1.,-1.5, 1.], [ 0.5,1.,1.5, 0., -0.5, 1.],
+			[ 0.5,  1.5,  1.  ,-0.5,  0. ,  1. ], [ 0.5,  2. ,  0.5, -1.5,  1. ,  1. ], [ 0.5 , 2. ,  2. , -0.5, -0.5,  2. ], 
+			[ 1. ,  0.5,  1.5 , 1. , -0.5,  0. ], [ 1. ,  1.5,  2. ,  0.5, -0.5,  1. ], [ 1.  , 1.5,  0.5, -0.5,  1.,   0. ], 
+			[ 1. ,  2. ,  1.5 ,-0.5,  0.5,  1. ], [ 1.5,  0.5,  1. ,  1. ,  0. , -0.5], [ 1.5 , 1. ,  0.5,  0. ,  1.,  -0.5], 
+			[ 1.5,  1. ,  2.  , 1. , -0.5,  0.5], [ 1.5,  2. ,  1. , -0.5,  1. ,  0.5], [ 2.  , 0.5,  0.5,  1. ,  1.,  -1.5], 
+			[ 2. ,  0.5,  2.  , 2. , -0.5, -0.5], [ 2. ,  1. ,  1.5,  1. ,  0.5, -0.5], [ 2.  , 1.5,  1. ,  0.5,  1.,  -0.5], 
+			[ 2. ,  2. ,  0.5 ,-0.5,  2. , -0.5], [2.,  2.,  2.,  0.5, 0.5, 0.5]])
 		
-		repetitions = 80
+		center_guarantee = dict()
+		for center in possible_centers_live:
+			center_axes = 1-np.array(center - np.floor(center))*2
+			center_origin = center - np.array(deflation_face_axes).T.dot(center_axes)/2
+			center_axis1 = np.array(deflation_face_axes[np.nonzero(center_axes)[0][0]])
+			center_axis2 = np.array(deflation_face_axes[np.nonzero(center_axes)[0][1]])
+			center_axis3 = np.array(deflation_face_axes[np.nonzero(center_axes)[0][2]])
+			chunk_corners = np.array([center_origin,
+				center_origin+center_axis1,center_origin+center_axis2,center_origin+center_axis3,
+				center_origin+center_axis1+center_axis2,center_origin+center_axis1+center_axis3,center_origin+center_axis2+center_axis3,
+				center_origin+center_axis1+center_axis2+center_axis3])
+			center_constraints = np.sum(np.stack(np.repeat([chunk_corners - a],30,axis=0),axis=1).dot(normallel.T)
+					* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
+			overall_center_constraints = 0.9732489894677302/(phi*phi*phi) - np.max(center_constraints,axis=0)
+			translated_constraints = (overall_center_constraints*np.concatenate([-np.ones(15),np.ones(15)]) 
+					+ np.concatenate([twoface_normals,twoface_normals]).dot(b.dot(normallel.T)))
+			translated_constraints = (translated_constraints).reshape((2,15)).T
+			center_guarantee[str(center)] = translated_constraints
+		print(center_guarantee.keys())
+		#'[ 1.   0.5  1.5  1.  -0.5  0. ]'
+		constraints_sorted = dict()
+		for center in possible_centers:
+			constraints_sorted[center] = []
+		guarantee_scale = np.max(np.abs(center_guarantee[str(chosen_center)][0] - center_guarantee[str(chosen_center)][1]))
+		
+		repetitions = 10
 		all_constraints = []
 		all_blocks = []
 		all_chunks = []
 		all_counters = []
 		all_chosen_centers = []
 		all_block_axes = []
+		all_sorted_constraints = []
 		if not Engine.editor_hint:
 			bb = a
 			for i in range(repetitions):
 				b = bb.copy()
-				(bb, relative_constraints, chosen_center, neighbor_blocks, interior_blocks) = self.chunk_test(bb)#,chosen_center)
+				(bb, relative_constraints, chosen_center, neighbor_blocks, interior_blocks) = self.chunk_test(bb,chosen_center)
 				# We can't use the raw constraints since they're centered on b; we need a shape
 				# relative to the origin.
 				# Simply translating them by the proper amount is a bit confusing;
@@ -985,7 +1018,10 @@ class numpylattice(MeshInstance):
 				constraints = (relative_constraints*np.concatenate([-np.ones(15),np.ones(15)]) 
 					+ np.concatenate([twoface_normals,twoface_normals]).dot(b.dot(normallel.T)))
 				constraints = (constraints).reshape((2,15)).T
+				
 				all_constraints.append(constraints)
+				constraints_sorted[str(chosen_center)].append(constraints)
+				all_sorted_constraints.append(str((chosen_center,constraints)))
 				
 				# Save the chunk info
 				all_chunks.append(str((chosen_center, interior_blocks, neighbor_blocks)))
@@ -1015,24 +1051,57 @@ class numpylattice(MeshInstance):
 #				print("Does our while loop use a valid test? "+
 #					str(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraints[:,0] )
 #								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraints[:,1])))
+				print("Correct chunk constraint? "+str(
+					(np.all(twoface_normals.dot(bb.dot(normallel.T)) > center_guarantee[str(chosen_center)][:,0] )
+								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
+				))
 				bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
-				bb = bb*4 - 2
+				bb = bb*2 - 1
 				bb = bb.dot(squarallel)
+				chosen_center = r.choice(possible_centers_live)
+				in_existing_constraint = np.any([(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraint[:,0] )
+								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraint[:,1])) 
+								for constraint in constraints_sorted[str(chosen_center)]])
+				generates_correct_chunk = (np.all(twoface_normals.dot(bb.dot(normallel.T)) > center_guarantee[str(chosen_center)][:,0] )
+								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
 				
-				# Generate chunks
 				counter = 0
-				upper_limit = 100000
-				while False:#np.any([(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraint[:,0] )
-					#			and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraint[:,1])) 
-					#			for constraint in all_constraints]) and counter < upper_limit:
+				upper_limit = 200000000
+				
+				while ((not generates_correct_chunk) or in_existing_constraint) and counter < upper_limit:
 					bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
-					#bb = bb*2 - 1
+					bb = bb*2 - 1
 					bb = bb.dot(squarallel)
+					chosen_center = r.choice(possible_centers_live)
+					generates_correct_chunk = (np.all(twoface_normals.dot(bb.dot(normallel.T)) > center_guarantee[str(chosen_center)][:,0] )
+								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
+					# It appears this inner loop is the slow part. Would be well worth it to 
+					# come up with these in a more thorough manner.
+					while (not generates_correct_chunk) and (counter < upper_limit):
+						# Generate in reasonable range for the chunk's constraint
+						approx_pos = b# b is the old value and falls within these
+						bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
+						# Scale up for margin of error and center
+						bb = (bb - 0.5)*1.5
+						# Get it on parallel plane
+						bb = bb.dot(squarallel)
+						# Scale down
+						bb = bb*guarantee_scale
+						# Translate
+						bb = bb + approx_pos
+						generates_correct_chunk = (np.all(twoface_normals.dot(bb.dot(normallel.T)) 
+									> center_guarantee[str(chosen_center)][:,0] )
+								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
+						counter = counter + 1
+					print("Found offset with same chunk. Distance from old value: "+str((bb-b)/guarantee_scale))
 					counter = counter + 1
-				if counter == upper_limit:
+					in_existing_constraint = np.any([(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraint[:,0] )
+								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraint[:,1])) 
+								for constraint in constraints_sorted[str(chosen_center)]])
+				all_counters.append(counter)
+				if counter >= upper_limit:
 					print("Loop overran its limit at attempt #"+str(i+1))
 					break
-				all_counters.append(counter)
 			#print(all_constraints)
 			print("t="+str(time.perf_counter()-starttime))
 			print(str(len(all_chunks))+" chunk layouts generated. Repeats:")
@@ -1040,6 +1109,7 @@ class numpylattice(MeshInstance):
 			print(str(len(set(all_blocks)))+" unique layouts.")#1419 unique layouts.
 			print("Max loops required: "+str(max(all_counters)))
 			all_counters = np.array(all_counters)
+			print("Unique sorted constraints: "+str(len(all_sorted_constraints)))
 			print(all_counters.mean())
 			#print(set(all_chosen_centers))
 			#print(set(all_block_axes))
