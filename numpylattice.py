@@ -2,6 +2,7 @@ from godot import exposed, export
 from godot import *
 import numpy as np
 from debugging import debugging
+import traceback
 import random as r
 import time
 
@@ -252,7 +253,7 @@ class numpylattice(MeshInstance):
 		relevance = np.all(np.abs((embedding_space[included].dot(worldplane.T)*multiplier 
 								- (chosen_center).dot(worldplane.T)*multiplier)
 								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
-								*(phi*phi*phi*multiplier) ))) < 1.5,axis=1)# Was "< 0.501"
+								*(phi*phi*phi*multiplier) ))) < 1.0,axis=1)# Was "< 0.501"
 		relevant_points = embedding_space[included][relevance]
 		# Recalculating just because it's fast and easier than trying to get the
 		# right numbers, arranged properly, out of the old "constraints" variable.
@@ -281,10 +282,15 @@ class numpylattice(MeshInstance):
 		print("Proposed new point inside the constraints:")
 		b = np.array([a[0]+r.random()/2-0.25,a[1]+r.random()/2-0.25,a[2]+r.random()/2-0.25,
 					a[3]+r.random()/2-0.25,a[4]+r.random()/2-0.25,a[5]+r.random()/2-0.25])
-		while np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((a-b).dot(normallel.T)) > constraints):
+		loop_counter = 0
+		while np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((a-b).dot(normallel.T)) > constraints) and loop_counter < 1000:
 			b = np.array([a[0]+r.random()/2-0.25,a[1]+r.random()/2-0.25,a[2]+r.random()/2-0.25,
 					a[3]+r.random()/2-0.25,a[4]+r.random()/2-0.25,a[5]+r.random()/2-0.25])
 			b = b.dot(squarallel)
+			loop_counter = loop_counter+1
+		if loop_counter == 100000:
+			# We failed to find one.
+			raise Exception("Overran loop_counter searching for an offset satisfying the constraints.")
 		print(b)
 		new_constraints = np.sum(np.stack(np.repeat([relevant_points - b],30,axis=0),axis=1).dot(normallel.T)
 			* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
@@ -721,7 +727,7 @@ class numpylattice(MeshInstance):
 		relevance = np.all(np.abs((embedding_space[included].dot(worldplane.T)*multiplier 
 								- (chosen_center).dot(worldplane.T)*multiplier)
 								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
-								*(phi*phi*phi*multiplier) ))) < 1.5,axis=1)# Was "< 0.501"
+								*(phi*phi*phi*multiplier) ))) < 1.0,axis=1)# Was "< 0.501"
 		relevant_points = embedding_space[included][relevance]
 		# Recalculating just because it's fast and easier than trying to get the
 		# right numbers, arranged properly, out of the old "constraints" variable.
@@ -991,8 +997,11 @@ class numpylattice(MeshInstance):
 		for center in possible_centers:
 			constraints_sorted[center] = []
 		guarantee_scale = np.max(np.abs(center_guarantee[str(chosen_center)][0] - center_guarantee[str(chosen_center)][1]))
-		
-		repetitions = 10
+		#debugging.breakpoint()
+		# Repetition counts above 10 mysteriously take forever.
+		# At 10, takes like 51 seconds. At 11, I haven't waited long enough.
+		# Yet it doesn't cover all the possible centers even...
+		repetitions = 200#5000
 		all_constraints = []
 		all_blocks = []
 		all_chunks = []
@@ -1004,42 +1013,58 @@ class numpylattice(MeshInstance):
 			bb = a
 			for i in range(repetitions):
 				b = bb.copy()
-				(bb, relative_constraints, chosen_center, neighbor_blocks, interior_blocks) = self.chunk_test(bb,chosen_center)
-				# We can't use the raw constraints since they're centered on b; we need a shape
-				# relative to the origin.
-				# Simply translating them by the proper amount is a bit confusing;
-				# in a given direction, starting from a pair like (0.1, 0.1) 
-				# which means we've got a margin of 0.1 on both sides, we might 
-				# translate it to something like (5.1,-4.9), which would mean
-				# we need to be between 5.1 in the positive direction and -4.9 in
-				# the negative direction -- IE, between 5.1 and 5.9 overall. So
-				# we negate the "negative direction" values and then arrange
-				# the whole thing in 15 pairs.
-				constraints = (relative_constraints*np.concatenate([-np.ones(15),np.ones(15)]) 
-					+ np.concatenate([twoface_normals,twoface_normals]).dot(b.dot(normallel.T)))
-				constraints = (constraints).reshape((2,15)).T
-				
-				all_constraints.append(constraints)
-				constraints_sorted[str(chosen_center)].append(constraints)
-				all_sorted_constraints.append(str((chosen_center,constraints)))
-				
-				# Save the chunk info
-				all_chunks.append(str((chosen_center, interior_blocks, neighbor_blocks)))
-				all_blocks.append(str((interior_blocks,neighbor_blocks)))
-				all_chosen_centers.append(str(chosen_center))
-				for block in interior_blocks:
-					all_block_axes.append(str(block - np.floor(block)))
-				
-				weirdness = False
-				if np.any(np.concatenate([twoface_normals,-twoface_normals]).dot(np.zeros(6).dot(normallel.T)) > relative_constraints):
-					print("Relative constraints didn't contain the point that generated them; some must've been negative.")
-					weirdness = True
-				if (not np.all(twoface_normals.dot(b.dot(normallel.T)) > constraints[:,0] )
-								and np.all(twoface_normals.dot(b.dot(normallel.T)) < constraints[:,1])):
-					print("Translated constraints didn't contain the point that generated them!!")
-					weirdness = True
-				if weirdness:
-					break
+				try:
+					(bb, relative_constraints, chosen_center, neighbor_blocks, interior_blocks) = self.chunk_test(bb,chosen_center)
+
+					# We can't use the raw constraints since they're centered on b; we need a shape
+					# relative to the origin.
+					# Simply translating them by the proper amount is a bit confusing;
+					# in a given direction, starting from a pair like (0.1, 0.1) 
+					# which means we've got a margin of 0.1 on both sides, we might 
+					# translate it to something like (5.1,-4.9), which would mean
+					# we need to be between 5.1 in the positive direction and -4.9 in
+					# the negative direction -- IE, between 5.1 and 5.9 overall. So
+					# we negate the "negative direction" values and then arrange
+					# the whole thing in 15 pairs.
+					constraints = (relative_constraints*np.concatenate([-np.ones(15),np.ones(15)]) 
+						+ np.concatenate([twoface_normals,twoface_normals]).dot(b.dot(normallel.T)))
+					constraints = (constraints).reshape((2,15)).T
+					
+					print(str(time.perf_counter()-starttime))
+					weirdness = False
+					if np.any(np.concatenate([twoface_normals,-twoface_normals]).dot(np.zeros(6).dot(normallel.T)) > relative_constraints):
+						print("Relative constraints didn't contain the point that generated them; some must've been negative.")
+						weirdness = True
+					if (not np.all(twoface_normals.dot(b.dot(normallel.T)) > constraints[:,0] )
+									and np.all(twoface_normals.dot(b.dot(normallel.T)) < constraints[:,1])):
+						print("Translated constraints didn't contain the point that generated them!!")
+						weirdness = True
+					if not (np.all(twoface_normals.dot(b.dot(normallel.T)) > center_guarantee[str(chosen_center)][:,0] )
+									and np.all(twoface_normals.dot(b.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1])):
+						print("Chunk constraint doesn't contain the point that generated it!")
+						weirdness = True
+						# Values which have caused this:
+						# [ 0.01094418  0.04052633 -0.09285401  0.09200656  0.00957298  0.07372379]
+					if time.perf_counter()-starttime > 9*60*60:
+						print("Taking more than 20 minutes...")
+						weirdness = True
+					if weirdness:
+						raise Exception("Going to skip this loop then")
+					
+					all_constraints.append(constraints)
+					constraints_sorted[str(chosen_center)].append(constraints)
+					all_sorted_constraints.append(str((chosen_center,constraints)))
+					
+					# Save the chunk info
+					all_chunks.append(str((chosen_center, interior_blocks, neighbor_blocks)))
+					all_blocks.append(str((interior_blocks,neighbor_blocks)))
+					all_chosen_centers.append(str(chosen_center))
+					for block in interior_blocks:
+						all_block_axes.append(str(block - np.floor(block)))
+				except Exception as e:
+					print("Bad constraints, skipping this loop")
+					print(e)
+					traceback.print_exc()
 				# Testing that we know how to match constraints properly
 				# The suggested value, bb, should fall within the constraints.
 #				print("Did the suggested value fall in its constraints? "+str(not
@@ -1051,10 +1076,6 @@ class numpylattice(MeshInstance):
 #				print("Does our while loop use a valid test? "+
 #					str(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraints[:,0] )
 #								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraints[:,1])))
-				print("Correct chunk constraint? "+str(
-					(np.all(twoface_normals.dot(bb.dot(normallel.T)) > center_guarantee[str(chosen_center)][:,0] )
-								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
-				))
 				bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
 				bb = bb*2 - 1
 				bb = bb.dot(squarallel)
@@ -1066,9 +1087,10 @@ class numpylattice(MeshInstance):
 								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
 				
 				counter = 0
-				upper_limit = 200000000
+				upper_limit = 80
 				
 				while ((not generates_correct_chunk) or in_existing_constraint) and counter < upper_limit:
+					print(str(time.perf_counter()-starttime))
 					bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
 					bb = bb*2 - 1
 					bb = bb.dot(squarallel)
@@ -1078,181 +1100,68 @@ class numpylattice(MeshInstance):
 					# It appears this inner loop is the slow part. Would be well worth it to 
 					# come up with these in a more thorough manner.
 					while (not generates_correct_chunk) and (counter < upper_limit):
-						# Generate in reasonable range for the chunk's constraint
-						approx_pos = b# b is the old value and falls within these
-						bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
-						# Scale up for margin of error and center
-						bb = (bb - 0.5)*1.5
-						# Get it on parallel plane
-						bb = bb.dot(squarallel)
-						# Scale down
-						bb = bb*guarantee_scale
-						# Translate
-						bb = bb + approx_pos
-						generates_correct_chunk = (np.all(twoface_normals.dot(bb.dot(normallel.T)) 
-									> center_guarantee[str(chosen_center)][:,0] )
-								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
+						_ = list(range(6))
+						r.shuffle(_)
+						for axis in _:
+							# Move the generated point toward the constraints by a random amount
+							#axis = r.randint(0,5)
+							# Get the min and max distances we need to move to get in this axis' constraints
+							divergence = center_guarantee[str(chosen_center)][axis] - twoface_normals[axis].dot(bb.dot(normallel.T))
+							rand_pos = r.random()
+							move = (divergence[0]*rand_pos + divergence[1]*(1-rand_pos))*twoface_normals[axis]
+							bb = bb + move.dot(normallel)
+							
+							generates_correct_chunk = (np.all(twoface_normals.dot(bb.dot(normallel.T)) 
+										> center_guarantee[str(chosen_center)][:,0] )
+									and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
+							if generates_correct_chunk:
+								# Break early before we mess it up
+								break
 						counter = counter + 1
-					print("Found offset with same chunk. Distance from old value: "+str((bb-b)/guarantee_scale))
+						if time.perf_counter()-starttime > 9*60*60:
+							print("Exceeded time limit in inner while loop.")
+							break
+					if generates_correct_chunk:
+						print("Found offset with same chunk; counter="+str(counter)+". Distance from old value: "+str((bb-b)/guarantee_scale))
+					else:
+						print("Procedure failed to get the intended chunk.")
 					counter = counter + 1
 					in_existing_constraint = np.any([(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraint[:,0] )
 								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraint[:,1])) 
 								for constraint in constraints_sorted[str(chosen_center)]])
+					if time.perf_counter()-starttime > 9*60*60:
+						print("Exceeded time limit in outer while loop.")
+						break
 				all_counters.append(counter)
 				if counter >= upper_limit:
 					print("Loop overran its limit at attempt #"+str(i+1))
 					break
-			#print(all_constraints)
+			#TODO Would be nice to combine constraint regions which produce the same
+			# chunk layout (some of which will be overlapping).
 			print("t="+str(time.perf_counter()-starttime))
 			print(str(len(all_chunks))+" chunk layouts generated. Repeats:")
 			print(len(all_chunks)-len(set(all_chunks)))
-			print(str(len(set(all_blocks)))+" unique layouts.")#1419 unique layouts.
+			print(str(len(set(all_blocks)))+" unique layouts.")#2298 unique layouts.
+			print(str(len(all_constraints))+" constraints generated. Repeats:")
+			print(len(all_constraints)-len(set([str(x) for x in all_constraints])))
+			print(str(len(set([str(x) for x in all_constraints])))+" unique constraints. (No check for overlap or subset/superset.)")
+			
 			print("Max loops required: "+str(max(all_counters)))
 			all_counters = np.array(all_counters)
 			print("Unique sorted constraints: "+str(len(all_sorted_constraints)))
-			print(all_counters.mean())
+			print("Average number of loops: "+str(all_counters.mean()))
+			print("Constraint counts for each possible chunk: "+str([len(x) for x in constraints_sorted.values()]))
+			print("Constraint counts minus repeats: "+str([len(set([str(member) for member in x])) for x in constraints_sorted.values()]))
+			print("All counters:")
+			print(all_counters)
+			self.constraints_sorted = constraints_sorted
+			self.all_chunks = all_chunks
+			self.all_constraints = all_constraints
 			#print(set(all_chosen_centers))
 			#print(set(all_block_axes))
-#{'[ 0.5  2.   2.  -0.5 -0.5  2. ]', '[ 1.   1.5  2.   0.5 -0.5  1. ]', '[2.  2.  2.  0.5 0.5 0.5]', '[ 1.   2.   1.5 -0.5  0.5  1. ]', '[ 1.   0.5  1.5  1.  -0.5  0. ]', '[ 0.5  1.   1.5  0.  -0.5  1. ]', '[ 1.5  1.   2.   1.  -0.5  0.5]', '[ 2.   0.5  2.   2.  -0.5 -0.5]', '[ 2.   1.   1.5  1.   0.5 -0.5]', '[ 0.5  0.5  2.   1.  -1.5  1. ]'}
-#{'[ 1.   0.5  1.5  1.  -0.5  0. ]', '[2.  2.  2.  0.5 0.5 0.5]', '[ 0.5  1.   1.5  0.  -0.5  1. ]', '[ 1.   2.   1.5 -0.5  0.5  1. ]', '[ 2.   1.   1.5  1.   0.5 -0.5]', '[ 0.5  2.   2.  -0.5 -0.5  2. ]', '[ 2.   0.5  2.   2.  -0.5 -0.5]', '[ 0.5  0.5  2.   1.  -1.5  1. ]', '[ 1.   1.5  2.   0.5 -0.5  1. ]', '[ 1.5  1.   2.   1.  -0.5  0.5]'}
-#{'[0.5 0.5 0.5 0.  0.  0. ]', '[ 0.5  0.5  2.   1.  -1.5  1. ]', '[ 0.5  1.   1.5  0.  -0.5  1. ]', 
-#'[ 0.5  1.5  1.  -0.5  0.   1. ]', '[ 0.5  2.   0.5 -1.5  1.   1. ]', #'[ 0.5  2.   2.  -0.5 -0.5  2. ]', 
-#'[ 1.   0.5  1.5  1.  -0.5  0. ]', '[ 1.   1.5  2.   0.5 -0.5  1. ]', '[ 1.   1.5  0.5 -0.5  1.   0. ]', 
-#'[ 1.   2.   1.5 -0.5  0.5  1. ]', '[ 1.5  0.5  1.   1.   0.  -0.5]', '[ 1.5  1.   0.5  0.   1.  -0.5]', 
-#'[ 1.5  1.   2.   1.  -0.5  0.5]', '[ 1.5  2.   1.  -0.5  1.   0.5]', '[ 2.   0.5  0.5  1.   1.  -1.5]', 
-#'[ 2.   0.5  2.   2.  -0.5 -0.5]',  '[ 2.   1.   1.5  1.   0.5 -0.5]', '[ 2.   1.5  1.   0.5  1.  -0.5]', 
-#'[ 2.   2.   0.5 -0.5  2.  -0.5]', '[2.  2.  2.  0.5 0.5 0.5]',  }
-#			print(np.concatenate([all_counters[:100].mean(),all_counters[100:200].mean(),
-#				all_counters[200:300].mean(),all_counters[300:400].mean(),all_counters[400:500].mean(),
-#				all_counters[500:600].mean(),all_counters[600:700].mean(),all_counters[700:800].mean()
-#			]))
-"""
-[-0.09034036  0.04535047 -0.11384384  0.28502651  0.18663901  0.20116496]
-Chose chunk [0.  0.5 0.  0.  0.5 0.5] second=2.5996314999999868
-Wiggle room in all 30 directions:
-[0.0218368  0.00485282 0.02454847 0.0140518  0.04457309 0.03391155
- 0.03469994 0.00142113 0.00048725 0.04176359 0.02920158 0.05972287
- 0.04987174 0.00627395 0.00936308 0.03240051 0.04938448 0.02968883
- 0.04018551 0.00966422 0.02032575 0.01953736 0.03209937 0.03303325
- 0.01247372 0.02503572 0.02803493 0.00436557 0.02724654 0.01135373]
-Wiggle room along the 15 axes:
-[0.05423731 0.05423731 0.05423731 0.05423731 0.05423731 0.05423731
- 0.05423731 0.0335205  0.0335205  0.05423731 0.05423731 0.08775781
- 0.05423731 0.0335205  0.02071681]
-Proposed new point inside the constraints:
-[-0.10429039  0.0408611  -0.10620435  0.29972654  0.20883509  0.21001799]
-New max constraint distance: 0.973120320270533
-Predicted new max: 0.9731203202705331
-Predicted to pass: True
-[-0.10429039  0.0408611  -0.10620435  0.29972654  0.20883509  0.21001799]
-Chose chunk [0.  0.5 0.  0.  0.5 0.5] second=2.5782736999999827
-Wiggle room in all 30 directions:
-[0.00225823 0.03066252 0.00236608 0.0199209  0.03449092 0.00324151
- 0.05264632 0.00041238 0.03053385 0.05285451 0.02133738 0.0359074
- 0.05410864 0.0310749  0.00087543 0.05197908 0.02357479 0.05187123
- 0.03431641 0.01974639 0.0509958  0.00159099 0.03310812 0.00298665
- 0.0013828  0.03289993 0.01832991 0.00012867 0.0024456  0.01984138]
-Wiggle room along the 15 axes:
-[0.05423731 0.05423731 0.05423731 0.05423731 0.05423731 0.05423731
- 0.05423731 0.0335205  0.0335205  0.05423731 0.05423731 0.05423731
- 0.05423731 0.0335205  0.02071681]
-Proposed new point inside the constraints:
-[-0.09973368  0.04201567 -0.10863546  0.29513268  0.20202516  0.20752676]
-New max constraint distance: 0.9727866410073203
-Predicted new max: 0.9727866410073205
-Predicted to pass: True
-Warning, new points!
-Closest new point to chunk: 0.5
-Novel points:4/2032
-{'[-2, -2, -1, 2, -1, 0]', '[-2, -1, 1, 2, -2, 1]', '[-1, -1, 1, 3, -2, 1]', '[-3, -2, -1, 1, -1, 0]'}
+	def _process(self,delta):
+		debugging.breakpoint()
 
-[-0.04214969 -0.0804242  -0.40199395  0.7990637   0.60032266  0.82271865]
-Chunks computed. t=2.554683600000004 seconds
-Chose chunk [ 0.5  1.  -0.5  0.   1.5  1. ] second=2.5550733999999977
-Wiggle room in all 30 directions:
-[0.05112147 0.034144   0.03562749 0.02513483 0.03755318 0.03975657
- 0.01838879 0.0094392  0.02031448 0.00724492 0.03181584 0.04423418
- 0.00688729 0.0228664  0.00412909 0.00311584 0.02009331 0.01860982
- 0.00838566 0.01668413 0.01448073 0.06936902 0.0447981  0.06744333
- 0.04699238 0.02242147 0.01000312 0.04735002 0.06489141 0.05010822]
-Wiggle room along the 15 axes:
-[0.05423731 0.05423731 0.05423731 0.0335205  0.05423731 0.05423731
- 0.08775781 0.05423731 0.08775781 0.05423731 0.05423731 0.05423731
- 0.05423731 0.08775781 0.05423731]
-Proposed new point inside the constraints:
-[-0.04329696 -0.08588073 -0.40043335  0.80385145  0.60944723  0.83016967]
-New max constraint distance: 0.9716017171127801
-Predicted new max: 0.9716017171127801
-Predicted to pass: True
-[-0.04329696 -0.08588073 -0.40043335  0.80385145  0.60944723  0.83016967]
-Chose chunk [ 0.5  1.  -0.5  0.   1.5  1. ] second=2.5473968000000013
-Wiggle room in all 30 directions:
-[0.04094795 0.04792252 0.02350689 0.02781741 0.03172016 0.0281919
- 0.02063971 0.00454277 0.02885299 0.01797437 0.00187743 0.03930068
- 0.00164727 0.03174849 0.00468501 0.01328936 0.00631478 0.03073042
- 0.00570308 0.02251714 0.0260454  0.06711809 0.04969454 0.05890482
- 0.03626294 0.01883938 0.01493663 0.05259003 0.05600932 0.04955229]
-Wiggle room along the 15 axes:
-[0.05423731 0.05423731 0.05423731 0.0335205  0.05423731 0.05423731
- 0.08775781 0.05423731 0.08775781 0.05423731 0.02071681 0.05423731
- 0.05423731 0.08775781 0.05423731]
-Proposed new point inside the constraints:
-[-0.0379087  -0.08075999 -0.4057313   0.7985846   0.59774128  0.82506816]
-New max constraint distance: 0.9718400752149063
-Predicted new max: 0.9718400752149063
-Predicted to pass: True
-Warning, new points!
-Closest new point to chunk: 0.4999999999999998
-Novel points:2/1897
-{'[2, -4, -1, 4, 1, -3]', '[3, -3, -1, 4, 1, -3]'}
-[-0.0379087  -0.08075999 -0.4057313   0.7985846   0.59774128  0.82506816]
-Chose chunk [ 0.5  1.  -0.5  0.   1.5  1. ] second=2.520566599999995
-Wiggle room in all 30 directions:
-[0.04956669 0.03395126 0.03749414 0.02784327 0.04038074 0.04230061
- 0.01175676 0.00437948 0.01464336 0.00947709 0.00209981 0.04815777
- 0.00140891 0.01761393 0.00480647 0.00467062 0.02028605 0.01674317
- 0.00567723 0.01385657 0.0119367  0.07600104 0.04985783 0.07311444
- 0.04476022 0.018617   0.00607953 0.05282839 0.07014388 0.04943084]
-Wiggle room along the 15 axes:
-[0.05423731 0.05423731 0.05423731 0.0335205  0.05423731 0.05423731
- 0.08775781 0.05423731 0.08775781 0.05423731 0.02071681 0.05423731
- 0.05423731 0.08775781 0.05423731]
-Proposed new point inside the constraints:
-[-0.0441522  -0.09743448 -0.38699097  0.79503878  0.61608302  0.82796904]
-New max constraint distance: 0.9706209514212343
-Predicted new max: 0.9706209514212343
-Predicted to pass: True
-Warning, new points!
-Closest new point to chunk: 0.4999999999999998
-Novel points:2/1897
-{'[2, -4, -1, 4, 1, -3]', '[3, -3, -1, 4, 1, -3]'}
-[-0.0441522  -0.09743448 -0.38699097  0.79503878  0.61608302  0.82796904]
-Chose chunk [ 0.5  1.  -0.5  0.   1.5  1. ] second=2.5837237000000073
-Wiggle room in all 30 directions:
-[0.0501028  0.05160927 0.00838677 0.00931782 0.01094204 0.03000145
- 0.03252467 0.01754608 0.00155944 0.02574919 0.0107706  0.04591532
- 0.00418748 0.01491804 0.02161468 0.00413451 0.00262804 0.04585054
- 0.02420268 0.04329527 0.02423586 0.05523314 0.03669123 0.05267787
- 0.02848812 0.0099462  0.00832199 0.05004983 0.03931926 0.03262263]
-Wiggle room along the 15 axes:
-[0.05423731 0.05423731 0.05423731 0.0335205  0.05423731 0.05423731
- 0.08775781 0.05423731 0.05423731 0.05423731 0.02071681 0.05423731
- 0.05423731 0.05423731 0.05423731]
-Proposed new point inside the constraints:
-[-0.04737544 -0.09025126 -0.39071531  0.79909699  0.61339999  0.8255957 ]
-New max constraint distance: 0.9712404992064727
-Predicted new max: 0.9712404992064722
-Predicted to pass: True
-Warning, new points!
-Closest new point to chunk: 0.027864045000420522
-Novel points:18/1913
-{'[-3, 2, -1, -3, 2, 4]', '[-3, 0, -2, -2, 2, 2]', '[-1, 0, -3, -1, 4, -1]', '[1, 4, 2, -2, 3, 3]',
-'[-2, 3, -1, -3, 3, 3]', '[2, -4, -1, 4, 1, -3]', '[1, 4, 3, -1, 2, 4]', '[-1, 2, -2, -2, 4, 1]',
-'[-1, 3, -1, -3, 4, 3]', '[2, 3, 3, 1, 2, 2]', '[2, 3, 1, -1, 4, 1]', '[-2, -1, -3, -1, 3, 0]',
-'[3, 2, 1, 1, 4, -1]', '[2, 3, 2, 0, 3, 2]', '[-2, 1, -2, -2, 3, 2]', '[3, 2, 2, 2, 3, 0]',
-'[3, -3, -1, 4, 1, -3]', '[1, 4, 1, -2, 4, 3]'}
-
-"""
 #class GoldenField:
 #	def __init__(self, shape):
 #		self.ndarray = 
