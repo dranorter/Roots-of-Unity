@@ -1,4 +1,5 @@
 from godot import exposed, export
+from godot.bindings import _File as File
 from godot import *
 import numpy as np
 from debugging import debugging
@@ -78,11 +79,23 @@ class numpylattice(MeshInstance):
 			])
 		twoface_normals = np.cross(twoface_projected[:,0],twoface_projected[:,1])
 		twoface_normals = twoface_normals/np.linalg.norm(twoface_normals,axis=1)[0]
-		dists = np.sum(np.stack(np.repeat([embedding_space
-			.reshape((-1,6))-a],15,axis=0),axis=1).dot(normallel.T)
+#		dists = np.sum(np.stack(np.repeat([embedding_space
+#			.reshape((-1,6))-a],15,axis=0),axis=1).dot(normallel.T)
+#			* np.concatenate(np.array([twoface_normals])
+#			.reshape((1,15,3))),axis=-1)
+#
+#		self.es_dists = (np.stack(np.repeat([embedding_space
+#			.reshape((-1,6)) ],15,axis=0),axis=1).dot(normallel.T)
+#			* np.concatenate(np.array([twoface_normals])
+#			.reshape((1,15,3))) )
+		dists = np.sum( self.es_dists
+			 - a.dot(normallel.T)
 			* np.concatenate(np.array([twoface_normals])
 			.reshape((1,15,3))),axis=-1)
+		
 		distance_scores = np.max(np.abs(dists),axis=1)
+		
+		
 		included = distance_scores < np.linalg.norm(np.array([0,0,1,-1,-1,-1]).dot(normallel.T))/2
 		included = included.reshape((esize,esize,esize,esize,esize,esize))
 		deflation_included = distance_scores < np.linalg.norm(np.array([0,0,1,-1,-1,-1]).dot(normallel.T))/(2*phi*phi*phi)
@@ -104,54 +117,89 @@ class numpylattice(MeshInstance):
 		all_lines = [lines0,lines1,lines2,lines3,lines4,lines5]
 		# Deflated lines are of distance 3 apart, having a distance of 1 in five
 		# of their coordinates and a distance of 2 in one of them.
-		deflated_lines = [[],[],[],[],[],[]]
-		for i in embedding_space[deflation_included]:
-			for j in embedding_space[deflation_included]:
-				if np.linalg.norm(i - j) == 3:
-					if np.sum(np.abs(i - j)) == 7:
-						if np.where(i - j == 2)[0].shape == (1,):
-							deflated_lines[np.where(i - j == 2)[0][0]].append(j)
+#		deflated_lines = [[],[],[],[],[],[]]
+#		for i in embedding_space[deflation_included]:
+#			for j in embedding_space[deflation_included]:
+#				if np.linalg.norm(i - j) == 3:
+#					if np.sum(np.abs(i - j)) == 7:
+#						if np.where(i - j == 2)[0].shape == (1,):
+#							deflated_lines[np.where(i - j == 2)[0][0]].append(j)
+#
+#		chunks = []
+#		for point in embedding_space[deflation_included]:
+#			# Find dimensions in which we have a neighbor in the positive direction
+#			pos_lines = set()
+#			for dim in range(6):
+#				if np.any(np.all(np.array(deflated_lines[dim]) - point == 0,axis=1)):
+#					pos_lines.add(dim)
+#			# Consider all sets of 3 such dimensions
+#			if len(pos_lines) >= 3:
+#				for i in pos_lines:
+#					for j in pos_lines - set([i]):
+#						for k in pos_lines - set([i,j]):
+#							# Check whether all eight cube corners exist with these axes
+#							try:
+#								if (deflation_included[tuple((point - offset)+deflation_face_axes[i]
+#														+deflation_face_axes[j])] and
+#									deflation_included[tuple((point - offset)+ deflation_face_axes[i]
+#														+deflation_face_axes[k])] and
+#									deflation_included[tuple((point - offset)+ deflation_face_axes[j]
+#														+deflation_face_axes[k])] and
+#									deflation_included[tuple((point - offset)+ deflation_face_axes[i]
+#														+deflation_face_axes[j]
+#														+deflation_face_axes[k])]):
+#									chunks.append(point+(np.array(deflation_face_axes[i])
+#										+np.array(deflation_face_axes[j])+np.array(deflation_face_axes[k]))/2)
+#							except IndexError:
+#								# If one of the indices was out of bound, it's not a chunk, so do nothing.
+#								pass
+#		print("Chunks computed. t="+str(time.perf_counter()-starttime)+" seconds")
+		# TODO It seems that very occasionally, deflation_faces is empty at this
+		# point; probably just means esize has to be greater than 8 to guarantee there are chunks.
+		# Recording a-values where this happens: [ 0.03464434, -0.24607234,
+		# -0.05386369,  0.2771699,   0.39596138,  0.45066235]
 		
-		chunks = []
 		if chosen_center is None:
-			for point in embedding_space[deflation_included]:
-				# Find dimensions in which we have a neighbor in the positive direction
-				pos_lines = set()
-				for dim in range(6):
-					if np.any(np.all(np.array(deflated_lines[dim]) - point == 0,axis=1)):
-						pos_lines.add(dim)
-				# Consider all sets of 3 such dimensions
-				if len(pos_lines) >= 3:
-					for i in pos_lines:
-						for j in pos_lines - set([i]):
-							for k in pos_lines - set([i,j]):
-								# Check whether all eight cube corners exist with these axes
-								try:
-									if (deflation_included[tuple((point - offset)+deflation_face_axes[i]
-															+deflation_face_axes[j])] and
-										deflation_included[tuple((point - offset)+ deflation_face_axes[i]
-															+deflation_face_axes[k])] and
-										deflation_included[tuple((point - offset)+ deflation_face_axes[j]
-															+deflation_face_axes[k])] and
-										deflation_included[tuple((point - offset)+ deflation_face_axes[i]
-															+deflation_face_axes[j]
-															+deflation_face_axes[k])]):
-										chunks.append(point+(np.array(deflation_face_axes[i])
-											+np.array(deflation_face_axes[j])+np.array(deflation_face_axes[k]))/2)
-								except IndexError:
-									# If one of the indices was out of bound, it's not a chunk, so do nothing.
-									pass
-			print("Chunks computed. t="+str(time.perf_counter()-starttime)+" seconds")
-			# TODO It seems that very occasionally, deflation_faces is empty at this
-			# point; probably just means esize has to be greater than 8 to guarantee there are chunks.
-			# Recording a-values where this happens: [ 0.03464434, -0.24607234,
-			# -0.05386369,  0.2771699,   0.39596138,  0.45066235]
-			
 			# Choose a chunk near origin
 			deflation_faces = np.array(chunks)
 			chosen_center = deflation_faces[
 				np.where(np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1)
 				== np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1).min())[0][0]]
+		else:
+			# Verify that chosen_center is within the existing chunks
+			if False:#not np.any(np.all(np.array(chunks) - chosen_center == 0,axis=1)):
+				print("Intended chunk not present!")
+				possible_centers_live = np.array([[0.5, 0.5, 0.5,0.,0.,0.],[0.5,0.5,2., 1.,-1.5, 1.], [ 0.5,1.,1.5, 0., -0.5, 1.],
+				[ 0.5,  1.5,  1.  ,-0.5,  0. ,  1. ], [ 0.5,  2. ,  0.5, -1.5,  1. ,  1. ], [ 0.5 , 2. ,  2. , -0.5, -0.5,  2. ], 
+				[ 1. ,  0.5,  1.5 , 1. , -0.5,  0. ], [ 1. ,  1.5,  2. ,  0.5, -0.5,  1. ], [ 1.  , 1.5,  0.5, -0.5,  1.,   0. ], 
+				[ 1. ,  2. ,  1.5 ,-0.5,  0.5,  1. ], [ 1.5,  0.5,  1. ,  1. ,  0. , -0.5], [ 1.5 , 1. ,  0.5,  0. ,  1.,  -0.5], 
+				[ 1.5,  1. ,  2.  , 1. , -0.5,  0.5], [ 1.5,  2. ,  1. , -0.5,  1. ,  0.5], [ 2.  , 0.5,  0.5,  1. ,  1.,  -1.5], 
+				[ 2. ,  0.5,  2.  , 2. , -0.5, -0.5], [ 2. ,  1. ,  1.5,  1. ,  0.5, -0.5], [ 2.  , 1.5,  1. ,  0.5,  1.,  -0.5], 
+				[ 2. ,  2. ,  0.5 ,-0.5,  2. , -0.5], [2.,  2.,  2.,  0.5, 0.5, 0.5]])
+				center_guarantee = dict()
+				for center in possible_centers_live:
+					center_axes = 1-np.array(center - np.floor(center))*2
+					center_origin = center - np.array(deflation_face_axes).T.dot(center_axes)/2
+					print("Origin (should be zeros): "+str(center_origin))
+					center_axis1 = np.array(deflation_face_axes[np.nonzero(center_axes)[0][0]])
+					center_axis2 = np.array(deflation_face_axes[np.nonzero(center_axes)[0][1]])
+					center_axis3 = np.array(deflation_face_axes[np.nonzero(center_axes)[0][2]])
+					chunk_corners = np.array([center_origin,
+						center_origin+center_axis1,center_origin+center_axis2,center_origin+center_axis3,
+						center_origin+center_axis1+center_axis2,center_origin+center_axis1+center_axis3,center_origin+center_axis2+center_axis3,
+						center_origin+center_axis1+center_axis2+center_axis3])
+					center_constraints = np.sum(np.stack(np.repeat([chunk_corners - a],30,axis=0),axis=1).dot(normallel.T)
+							* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
+					overall_center_constraints = 0.9732489894677302/(phi*phi*phi) - np.max(center_constraints,axis=0)
+					translated_constraints = (overall_center_constraints*np.concatenate([-np.ones(15),np.ones(15)]) 
+							+ np.concatenate([twoface_normals,twoface_normals]).dot(a.dot(normallel.T)))
+					translated_constraints = (translated_constraints).reshape((2,15)).T
+					center_guarantee[str(center)] = translated_constraints
+				generates_correct_chunk = (np.all(twoface_normals.dot(a.dot(normallel.T)) 
+							> center_guarantee[str(chosen_center)][:,0] )
+						and np.all(twoface_normals.dot(a.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
+				print("The test that got us here says: "+generates_correct_chunk)
+				raise Exception("Intended chunk not present!")
 		print("Chose chunk "+str(chosen_center)+" second="+str(time.perf_counter()-starttime))
 		chosen_axes = 1-np.array(chosen_center - np.floor(chosen_center))*2
 		chosen_origin = chosen_center - np.array(deflation_face_axes).T.dot(chosen_axes)/2
@@ -162,7 +210,7 @@ class numpylattice(MeshInstance):
 		# Now move the chosen chunk to center stage
 		embedding_space = embedding_space - chosen_origin
 		chosen_center = chosen_center - chosen_origin
-		deflated_lines = [[l - chosen_origin for l in ll] for ll in deflated_lines]
+		#deflated_lines = [[l - chosen_origin for l in ll] for ll in deflated_lines]
 		all_lines = [[l - chosen_origin for l in ll] for ll in all_lines]
 		a = (a - chosen_origin).dot(squarallel)
 		chosen_origin = np.zeros(6)
@@ -196,14 +244,7 @@ class numpylattice(MeshInstance):
 			blocks = np.concatenate((blocks,embedding_space[nonzero]+np.array(ax123,dtype=np.float)/2))
 
 		multiplier = 4
-		array_mesh = ArrayMesh()
-		self.mesh = array_mesh
 
-
-		st = SurfaceTool()
-		#print("Drawing neighbor blocks next. seconds="+str(time.perf_counter()-starttime))
-		st.begin(Mesh.PRIMITIVE_LINES)
-		st.add_color(Color(0,.5,0))
 		neighbor_blocks = []
 		for block in blocks:
 			face_origin = np.floor(block).dot(worldplane.T)*multiplier
@@ -233,7 +274,7 @@ class numpylattice(MeshInstance):
 								*(phi*phi*phi*multiplier) ))) <= 0.5):
 				# Represents a voxel inside our chosen chunk
 				inside_blocks.append(block)
-
+				
 				face_origin = np.floor(block).dot(worldplane.T)*multiplier
 				face_tip = np.ceil(block).dot(worldplane.T)*multiplier
 				dir1,dir2,dir3 = np.eye(6)[np.nonzero(np.ceil(block)-np.floor(block))[0]].dot(worldplane.T)*multiplier
@@ -241,6 +282,7 @@ class numpylattice(MeshInstance):
 				dir2 = Vector3(dir2[0],dir2[1],dir2[2])
 				dir3 = Vector3(dir3[0],dir3[1],dir3[2])
 		all_owned_blocks = neighbor_blocks + inside_blocks
+		
 		# Now we want to calculate the validity bounds for this chunk.
 		# Tentatively, only including vertices inside the chunk. I might want
 		# to include all vertices of blocks which overlap the chunk, but it
@@ -273,7 +315,11 @@ class numpylattice(MeshInstance):
 		print("Max chunk constraint distance: "+str(np.max(np.abs(chunk_dists))))
 		overall_chunk_constraints = 0.9732489894677302/(phi*phi*phi) - np.max(chunk_dists,axis=0)
 		
-		constraints = np.min([constraints,overall_chunk_constraints],axis=0)
+		if np.any(overall_chunk_constraints <= 0):
+			print("Bad chunk constraints. Hopefully just means the chunk isn't really present.")
+			raise Exception("Bad chunk constraints.")
+		else:
+			constraints = np.min([constraints,overall_chunk_constraints],axis=0)
 		
 		#print("Wiggle room in all 30 directions:")
 		#print(constraints)
@@ -283,12 +329,22 @@ class numpylattice(MeshInstance):
 		b = np.array([a[0]+r.random()/2-0.25,a[1]+r.random()/2-0.25,a[2]+r.random()/2-0.25,
 					a[3]+r.random()/2-0.25,a[4]+r.random()/2-0.25,a[5]+r.random()/2-0.25])
 		loop_counter = 0
-		while np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((a-b).dot(normallel.T)) > constraints) and loop_counter < 1000:
-			b = np.array([a[0]+r.random()/2-0.25,a[1]+r.random()/2-0.25,a[2]+r.random()/2-0.25,
-					a[3]+r.random()/2-0.25,a[4]+r.random()/2-0.25,a[5]+r.random()/2-0.25])
-			b = b.dot(squarallel)
-			loop_counter = loop_counter+1
-		if loop_counter == 100000:
+		prop_search_limit = 1000
+		
+		while np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((a-b).dot(normallel.T)) > 
+							constraints)and(loop_counter<prop_search_limit):
+			# Move the generated point toward the constraints by a random amount
+			# Get the min and max distances we need to move to get in this axis' constraints
+			divergence = b - a
+			rand_pos = r.random()
+			move = divergence * rand_pos
+			b = b - move
+			
+			if not np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((a-b).dot(normallel.T)) > constraints):
+				# Break early before we mess it up
+				break
+			loop_counter = loop_counter + 1
+		if loop_counter >= prop_search_limit:
 			# We failed to find one.
 			raise Exception("Overran loop_counter searching for an offset satisfying the constraints.")
 		print(b)
@@ -317,13 +373,14 @@ class numpylattice(MeshInstance):
 		return (b, constraints, chosen_center, neighbor_blocks, inside_blocks)
 	
 	def _ready(self):
+		debugging.breakpoint()
 		# TODO This needs to be rewritten to generate integer 3D coordinates
 		# by using the golden field (R adjoin phi) rather than just R.
 		starttime = time.perf_counter()
 		phi = 1.61803398874989484820458683
 		# Set up a 6D array holding 6-vectors which are their own coords
 		# w/in the array
-		esize = 12
+		esize = 10
 		offset = -5
 		#embedding_space = np.zeros((esize,esize,esize,esize,esize,esize,6),dtype=np.int8)
 		print("Creating embedding space; t="+str(time.perf_counter()-starttime))
@@ -426,10 +483,18 @@ class numpylattice(MeshInstance):
 		twoface_normals = np.cross(twoface_projected[:,0],twoface_projected[:,1])
 		twoface_normals = twoface_normals/np.linalg.norm(twoface_normals,axis=1)[0]
 		
-		
+		# TODO This could be made faster if I would take an initial 
+		# product of twoface_normals with the parallel space basis vectors - 
+		# then I could just have a matrix transformation from a parallel space
+		# point to its distance along all 15 constraint directions, rather than 
+		# doing 15 separate dot products.
 		print("Ready to compute lattice at t="+str(time.perf_counter()-starttime))
-		constraints = np.sum(np.stack(np.repeat([embedding_space
-			.reshape((-1,6))-a],15,axis=0),axis=1).dot(normallel.T)
+		self.es_dists = (np.stack(np.repeat([embedding_space
+			.reshape((-1,6)) ],15,axis=0),axis=1).dot(normallel.T)
+			* np.concatenate(np.array([twoface_normals])
+			.reshape((1,15,3))) )
+		constraints = np.sum( self.es_dists
+			 - a.dot(normallel.T)
 			* np.concatenate(np.array([twoface_normals])
 			.reshape((1,15,3))),axis=-1)
 		distance_scores = np.max(np.abs(constraints),axis=1)
@@ -467,8 +532,11 @@ class numpylattice(MeshInstance):
 		
 		all_lines = [lines0,lines1,lines2,lines3,lines4,lines5]
 		print("Lines found in "+str(time.perf_counter()-starttime))
+		
 		# Deflated lines are of distance 3 apart, having a distance of 1 in five
 		# of their coordinates and a distance of 2 in one of them.
+		# TODO Finding deflated lines takes perhaps 100 times as long
+		# as finding the lines.
 		deflated_lines = [[],[],[],[],[],[]]
 		nonstandard_deflated_lines = set()
 		standard_deflated_lines = set()
@@ -946,18 +1014,6 @@ class numpylattice(MeshInstance):
 		# adjustment to a, and then whatever range of a-values results can be
 		# our set of canonical values for a. (Hopefully there's a good way to
 		# keep them in one cube.)
-		
-		# TODO As said above, the offset alone doesn't specify a chunk layout,
-		# we need to combine it with a choice of chosen_center. So we need to 
-		# store constraints as a pair, constraints plus chosen_center. And we
-		# already successfully reduce the possible chosen_center values to a set
-		# of just 20. I could, for each of those, kinda pre-generate the 
-		# constraints for that particular chunk to actually exist in a grid.
-		# Then, each loop of the test should hand chunk_test a specific chosen_center,
-		# along with an offset value which falls within the constraints allowing that
-		# center to correspond with an actual chunk. If floats are accurate enough
-		# for present purposes, that should allow us to pass the test. If not,
-		# writing custom ndarray containers is looking pretty straightforward.
 		possible_centers = {'[0.5 0.5 0.5 0.  0.  0. ]', '[ 0.5  0.5  2.   1.  -1.5  1. ]', '[ 0.5  1.   1.5  0.  -0.5  1. ]', 
 			'[ 0.5  1.5  1.  -0.5  0.   1. ]', '[ 0.5  2.   0.5 -1.5  1.   1. ]', '[ 0.5  2.   2.  -0.5 -0.5  2. ]', 
 			'[ 1.   0.5  1.5  1.  -0.5  0. ]', '[ 1.   1.5  2.   0.5 -0.5  1. ]', '[ 1.   1.5  0.5 -0.5  1.   0. ]', 
@@ -977,6 +1033,7 @@ class numpylattice(MeshInstance):
 		for center in possible_centers_live:
 			center_axes = 1-np.array(center - np.floor(center))*2
 			center_origin = center - np.array(deflation_face_axes).T.dot(center_axes)/2
+			print("Origin (should be zeros): "+str(center_origin))
 			center_axis1 = np.array(deflation_face_axes[np.nonzero(center_axes)[0][0]])
 			center_axis2 = np.array(deflation_face_axes[np.nonzero(center_axes)[0][1]])
 			center_axis3 = np.array(deflation_face_axes[np.nonzero(center_axes)[0][2]])
@@ -984,11 +1041,12 @@ class numpylattice(MeshInstance):
 				center_origin+center_axis1,center_origin+center_axis2,center_origin+center_axis3,
 				center_origin+center_axis1+center_axis2,center_origin+center_axis1+center_axis3,center_origin+center_axis2+center_axis3,
 				center_origin+center_axis1+center_axis2+center_axis3])
+			# TODO I'm subtracting "a" and then adding it in again; should remove it from the calculation.
 			center_constraints = np.sum(np.stack(np.repeat([chunk_corners - a],30,axis=0),axis=1).dot(normallel.T)
 					* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
 			overall_center_constraints = 0.9732489894677302/(phi*phi*phi) - np.max(center_constraints,axis=0)
 			translated_constraints = (overall_center_constraints*np.concatenate([-np.ones(15),np.ones(15)]) 
-					+ np.concatenate([twoface_normals,twoface_normals]).dot(b.dot(normallel.T)))
+					+ np.concatenate([twoface_normals,twoface_normals]).dot(a.dot(normallel.T)))
 			translated_constraints = (translated_constraints).reshape((2,15)).T
 			center_guarantee[str(center)] = translated_constraints
 		print(center_guarantee.keys())
@@ -1001,7 +1059,9 @@ class numpylattice(MeshInstance):
 		# Repetition counts above 10 mysteriously take forever.
 		# At 10, takes like 51 seconds. At 11, I haven't waited long enough.
 		# Yet it doesn't cover all the possible centers even...
-		repetitions = 200#5000
+		repetitions = 20000
+		time_limit_seconds = 60#10*60*60
+		inner_loop_upper_limit = 20000
 		all_constraints = []
 		all_blocks = []
 		all_chunks = []
@@ -1011,6 +1071,20 @@ class numpylattice(MeshInstance):
 		all_sorted_constraints = []
 		if not Engine.editor_hint:
 			bb = a
+			fs = File()
+			# Below is an attempt to rescue the older data.
+#			for filename in ["res://chunklayouts 1","res://chunklayouts 2"]:
+#				fs.open(filename,fs.READ)
+#				while not fs.eof_reached():
+#					# Get the next chosen_center string
+#					ch_c = fs.get_line()
+#					# Retrieve the 30 floats as a constraint array
+#					cstts = np.zeros((30))
+#					for i in range(30):
+#						cstts[i] = fs.get_float()
+#					cstts = cstts.reshape((15,2))
+#					# Store the blocks in string form
+#					fs.store_string(all_blocks[i])
 			for i in range(repetitions):
 				b = bb.copy()
 				try:
@@ -1032,8 +1106,15 @@ class numpylattice(MeshInstance):
 					
 					print(str(time.perf_counter()-starttime))
 					weirdness = False
+					if np.any(relative_constraints < 0):
+						print("Some of the relative constraints were negative!")
+						weirdness = True
 					if np.any(np.concatenate([twoface_normals,-twoface_normals]).dot(np.zeros(6).dot(normallel.T)) > relative_constraints):
 						print("Relative constraints didn't contain the point that generated them; some must've been negative.")
+						weirdness = True
+					if not np.all(constraints[:,0] < constraints[:,1]):
+						print("Seeing some translated constraints with zero or negative width!")
+						print(constraints[:,1] - constraints[:,0])
 						weirdness = True
 					if (not np.all(twoface_normals.dot(b.dot(normallel.T)) > constraints[:,0] )
 									and np.all(twoface_normals.dot(b.dot(normallel.T)) < constraints[:,1])):
@@ -1045,8 +1126,8 @@ class numpylattice(MeshInstance):
 						weirdness = True
 						# Values which have caused this:
 						# [ 0.01094418  0.04052633 -0.09285401  0.09200656  0.00957298  0.07372379]
-					if time.perf_counter()-starttime > 9*60*60:
-						print("Taking more than 20 minutes...")
+					if time.perf_counter()-starttime > time_limit_seconds:
+						print("Taking more than overall time limit...")
 						weirdness = True
 					if weirdness:
 						raise Exception("Going to skip this loop then")
@@ -1057,12 +1138,12 @@ class numpylattice(MeshInstance):
 					
 					# Save the chunk info
 					all_chunks.append(str((chosen_center, interior_blocks, neighbor_blocks)))
-					all_blocks.append(str((interior_blocks,neighbor_blocks)))
+					all_blocks.append((interior_blocks,neighbor_blocks))
 					all_chosen_centers.append(str(chosen_center))
 					for block in interior_blocks:
 						all_block_axes.append(str(block - np.floor(block)))
 				except Exception as e:
-					print("Bad constraints, skipping this loop")
+					print("Weirdness, skipping this loop")
 					print(e)
 					traceback.print_exc()
 				# Testing that we know how to match constraints properly
@@ -1080,6 +1161,8 @@ class numpylattice(MeshInstance):
 				bb = bb*2 - 1
 				bb = bb.dot(squarallel)
 				chosen_center = r.choice(possible_centers_live)
+				print("...")
+				print("New target chunk: "+str(chosen_center))
 				in_existing_constraint = np.any([(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraint[:,0] )
 								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraint[:,1])) 
 								for constraint in constraints_sorted[str(chosen_center)]])
@@ -1087,7 +1170,7 @@ class numpylattice(MeshInstance):
 								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
 				
 				counter = 0
-				upper_limit = 80
+				upper_limit = inner_loop_upper_limit
 				
 				while ((not generates_correct_chunk) or in_existing_constraint) and counter < upper_limit:
 					print(str(time.perf_counter()-starttime))
@@ -1118,8 +1201,8 @@ class numpylattice(MeshInstance):
 								# Break early before we mess it up
 								break
 						counter = counter + 1
-						if time.perf_counter()-starttime > 9*60*60:
-							print("Exceeded time limit in inner while loop.")
+						if time.perf_counter()-starttime > time_limit_seconds:
+							print("Exceeded overall time limit while in inner while loop.")
 							break
 					if generates_correct_chunk:
 						print("Found offset with same chunk; counter="+str(counter)+". Distance from old value: "+str((bb-b)/guarantee_scale))
@@ -1129,19 +1212,23 @@ class numpylattice(MeshInstance):
 					in_existing_constraint = np.any([(np.all(twoface_normals.dot(bb.dot(normallel.T)) > constraint[:,0] )
 								and np.all(twoface_normals.dot(bb.dot(normallel.T)) < constraint[:,1])) 
 								for constraint in constraints_sorted[str(chosen_center)]])
-					if time.perf_counter()-starttime > 9*60*60:
+					if time.perf_counter()-starttime > time_limit_seconds:
 						print("Exceeded time limit in outer while loop.")
 						break
 				all_counters.append(counter)
 				if counter >= upper_limit:
 					print("Loop overran its limit at attempt #"+str(i+1))
 					break
+				if time.perf_counter()-starttime > time_limit_seconds:
+					print("Exceeded time limit in outer loop.")
+					break
 			#TODO Would be nice to combine constraint regions which produce the same
 			# chunk layout (some of which will be overlapping).
 			print("t="+str(time.perf_counter()-starttime))
+			print("After "+str(len(all_counters))+" tries,")
 			print(str(len(all_chunks))+" chunk layouts generated. Repeats:")
 			print(len(all_chunks)-len(set(all_chunks)))
-			print(str(len(set(all_blocks)))+" unique layouts.")#2298 unique layouts.
+			print(str(len(set([str(tup) for tup in all_blocks])))+" unique layouts.")#2298 unique layouts.
 			print(str(len(all_constraints))+" constraints generated. Repeats:")
 			print(len(all_constraints)-len(set([str(x) for x in all_constraints])))
 			print(str(len(set([str(x) for x in all_constraints])))+" unique constraints. (No check for overlap or subset/superset.)")
@@ -1154,13 +1241,79 @@ class numpylattice(MeshInstance):
 			print("Constraint counts minus repeats: "+str([len(set([str(member) for member in x])) for x in constraints_sorted.values()]))
 			print("All counters:")
 			print(all_counters)
+			
+			fs = File()
+			fs.open("res://chunklayouts",fs.WRITE)
+			# For each successful loop:
+			for i in range(len(all_chunks)):
+				try:
+					# Store the relevant chunk as chosen_center string
+					fs.store_line(all_chosen_centers[i])
+					# Store the 30 floats
+					for f in all_constraints[i].flatten():
+						fs.store_real(f)
+					# First store the number of inside blocks and outside blocks
+					fs.store_32(len(all_blocks[i][0]))
+					fs.store_32(len(all_blocks[i][1]))
+					# Then store the blocks as strings
+					for block in all_blocks[i][0]:
+						fs.store_line(repr(list(block)))
+					for block in all_blocks[i][1]:
+						fs.store_line(repr(list(block)))
+				except Exception as e:
+					print("Encountered some sort of problem saving.")
+					print(e)
+					break
+			fs.close()
+			
 			self.constraints_sorted = constraints_sorted
 			self.all_chunks = all_chunks
 			self.all_constraints = all_constraints
+			self.all_blocks = all_blocks
+			self.all_chunks = all_chunks
+			self.all_sorted_constraints = all_sorted_constraints
+			self.all_chosen_centers = all_chosen_centers
 			#print(set(all_chosen_centers))
 			#print(set(all_block_axes))
+		# There are a couple ways I could search more systematically.
+		# If I can list all the blocks which occur in at least one chunk layout,
+		# I could proceed in something like a tree: the root node would have
+		# no commitments, and each child would represent the presence of a certain
+		# block in the chunk. This would be redundant, so I'd put the blocks in
+		# some order and require children to be greater than their parent within
+		# that order. The tree would be traversed depth-first, and reaching a 
+		# given node would mean calculating the constraints for the corresponding
+		# block and finding that they're compatible with the parent constraints.
+		# (I suppose there could be child nodes representing dead ends, IE 
+		# labeled with a given block and the fact that it's incompatible.)
+		# When no more children can be added, the chunk is either complete, or
+		# it's incomplete (due to the ordering requirement excluding blocks 
+		# which are compatible with all constraints so far). We can avoid
+		# generating incomplete leaf nodes as follows. We traverse using the
+		# ordering of course, checking possible children from low to high. A
+		# new child can either make the constraints narrower than the parent,
+		# or keep them the same. If they're kept the same, this means the 
+		# presence of all blocks from ancestor nodes guaranteed the presence of
+		# this block. This needs to be the last block (according to the ordering,
+		# and the traversal order) added as a child for the parent node. Any
+		# additional siblings would be missing that logically implied block,
+		# and therefore could only end up incomplete.
+		# So, avoiding invalid children and incomplete children, whenever we
+		# run out of possible children it just means we've checked all blocks
+		# and no more can be added to the chunk. The process as described, 
+		# then, would just produce maximal chunks, and wouldn't cover regions
+		# of the constraint space where moving over slightly would add blocks
+		# without removing any. If we're really talking about blocks which
+		# overlap the chunk, this shouldn't be an issue, but for completeness
+		# nodes could be added which state the exclusion of a block rather
+		# than its inclusion. This implies we'll end up with every block, either
+		# excluded or included, as a parent of every leaf node; so each node
+		# has a maximum of two children, corresponding to the inclusion or
+		# exclusion of the very next block in the chosen ordering.
+	
 	def _process(self,delta):
-		debugging.breakpoint()
+		if not Engine.editor_hint:
+			debugging.breakpoint()
 
 #class GoldenField:
 #	def __init__(self, shape):
