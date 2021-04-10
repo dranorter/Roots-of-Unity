@@ -1022,13 +1022,13 @@ class numpylattice(MeshInstance):
 		# adjustment to a, and then whatever range of a-values results can be
 		# our set of canonical values for a. (Hopefully there's a good way to
 		# keep them in one cube.)
-		possible_centers = {'[0.5 0.5 0.5 0.  0.  0. ]', '[ 0.5  0.5  2.   1.  -1.5  1. ]', '[ 0.5  1.   1.5  0.  -0.5  1. ]', 
+		possible_centers = ['[0.5 0.5 0.5 0.  0.  0. ]', '[ 0.5  0.5  2.   1.  -1.5  1. ]', '[ 0.5  1.   1.5  0.  -0.5  1. ]', 
 			'[ 0.5  1.5  1.  -0.5  0.   1. ]', '[ 0.5  2.   0.5 -1.5  1.   1. ]', '[ 0.5  2.   2.  -0.5 -0.5  2. ]', 
 			'[ 1.   0.5  1.5  1.  -0.5  0. ]', '[ 1.   1.5  2.   0.5 -0.5  1. ]', '[ 1.   1.5  0.5 -0.5  1.   0. ]', 
 			'[ 1.   2.   1.5 -0.5  0.5  1. ]', '[ 1.5  0.5  1.   1.   0.  -0.5]', '[ 1.5  1.   0.5  0.   1.  -0.5]', 
 			'[ 1.5  1.   2.   1.  -0.5  0.5]', '[ 1.5  2.   1.  -0.5  1.   0.5]', '[ 2.   0.5  0.5  1.   1.  -1.5]', 
 			'[ 2.   0.5  2.   2.  -0.5 -0.5]', '[ 2.   1.   1.5  1.   0.5 -0.5]', '[ 2.   1.5  1.   0.5  1.  -0.5]', 
-			'[ 2.   2.   0.5 -0.5  2.  -0.5]', '[2.  2.  2.  0.5 0.5 0.5]'}
+			'[ 2.   2.   0.5 -0.5  2.  -0.5]', '[2.  2.  2.  0.5 0.5 0.5]']
 		possible_centers_live = np.array([[0.5, 0.5, 0.5,0.,0.,0.],[0.5,0.5,2., 1.,-1.5, 1.], [ 0.5,1.,1.5, 0., -0.5, 1.],
 			[ 0.5,  1.5,  1.  ,-0.5,  0. ,  1. ], [ 0.5,  2. ,  0.5, -1.5,  1. ,  1. ], [ 0.5 , 2. ,  2. , -0.5, -0.5,  2. ], 
 			[ 1. ,  0.5,  1.5 , 1. , -0.5,  0. ], [ 1. ,  1.5,  2. ,  0.5, -0.5,  1. ], [ 1.  , 1.5,  0.5, -0.5,  1.,   0. ], 
@@ -1086,21 +1086,34 @@ class numpylattice(MeshInstance):
 #				fs.open("res://chunklayouts",fs.READ)
 #				while not fs.eof_reached():
 #					# relevant chunk as chosen_center string
-#					ch_c = fs.get_line()
+#					ch_c = str(fs.get_line())
 #					# Constraint is 30 floats
 #					cstts = np.zeros((30))
 #					for i in range(30):
 #						cstts[i] = fs.get_real()
+#					cstts = cstts.reshape((15,2))
 #					# Numbers of inside blocks and outside blocks
-#					inside_ct = fs.get_32()
-#					outside_ct = fs.get_32()
+#					inside_ct = int(fs.get_line())
+#					outside_ct = int(fs.get_line())
 #					# Then retrieve the strings representing the blocks
 #					is_blocks = []
 #					os_blocks = []
 #					for i in range(inside_ct):
-#						is_blocks.append(fs.get_line())
+#						is_blocks.append(eval(str(fs.get_line())))
 #					for i in range(outside_ct):
-#						fs.get_line()
+#						os_blocks.append(eval(str(fs.get_line()))
+#					
+#					#TODO Check here for overlap with existing constraints.
+#					
+#					ch_c_live = possible_centers_live[possible_centers.index(ch_c)]
+#					all_constraints.append(cstts)
+#					constraints_sorted[ch_c].append(cstts)
+#					all_sorted_constraints.append(str((ch_c_live,cstts)))
+#					all_chunks.append(str((ch_c_live, is_blocks, os_blocks)))
+#					all_blocks.append((is_blocks,os_blocks))
+#					all_chosen_centers.append(ch_c)
+#					for block in interior_blocks:
+#						all_block_axes.append(str(block - np.floor(block)))
 #			except Exception as e:
 #				print("Encountered some sort of problem saving.")
 #				print(e)
@@ -1206,6 +1219,14 @@ class numpylattice(MeshInstance):
 					while (not generates_correct_chunk) and (counter < upper_limit):
 						_ = list(range(15))
 						r.shuffle(_)
+						# TODO In reality, IIUC, there are only three constraint
+						# axes per chunk which are relevant; the constraints make
+						# the shape of a chunk. I believe my current method of
+						# randomization ends up with fewer points near corners
+						# because the different axes are correlated. But if we
+						# could find the three relevant axes and use them as
+						# a basis, we should be able to evently distribute the
+						# random exploration.
 						for axis in _:
 							# Move the generated point toward the constraints by a random amount
 							#axis = r.randint(0,5)
