@@ -6,6 +6,7 @@ from debugging import debugging
 import traceback
 import random as r
 import time
+import numbers
 
 COLOR = ResourceLoader.load("res://new_spatialmaterial.tres")
 
@@ -217,10 +218,10 @@ class numpylattice(MeshInstance):
 		print("Corrected offset:")
 		print(a)
 
+		# TODO: This part is a little slow
 		blocks = np.zeros((0,6))
 		for axes in ch3:
 			ax1, ax2, ax3 = np.eye(6,dtype=np.int64)[np.nonzero(axes)[0]]
-			#print([ax1,ax2,ax3])
 			ax12 = ax1 + ax2
 			ax13 = ax1 + ax3
 			ax23 = ax2 + ax3
@@ -242,45 +243,51 @@ class numpylattice(MeshInstance):
 					ax123[3]:esize-1+ax123[3],ax123[4]:esize-1+ax123[4],ax123[5]:esize-1+ax123[5]])
 			nonzero = np.nonzero(np.all([r1,r2,r3,r4,r5,r6,r7,r8],axis=0))
 			blocks = np.concatenate((blocks,embedding_space[nonzero]+np.array(ax123,dtype=np.float)/2))
-
+		print("Found "+str(len(blocks))+" blocks in the lattice")
 		multiplier = 4
-
+		
 		neighbor_blocks = []
-		for block in blocks:
-			face_origin = np.floor(block).dot(worldplane.T)*multiplier
-			face_tip = np.ceil(block).dot(worldplane.T)*multiplier
-			dir1,dir2,dir3 = np.eye(6)[np.nonzero(np.ceil(block)-np.floor(block))[0]].dot(worldplane.T)*multiplier
-			corner1,corner2,corner3,corner4,corner5,corner6,corner7,corner8 = (
-				face_origin, face_tip, face_origin + dir1, face_origin + dir2, face_origin + dir3,
-				face_tip - dir1, face_tip - dir2, face_tip - dir3
-			)
-			if np.any(np.abs((np.array(block).dot(worldplane.T)*multiplier - (chosen_center).dot(worldplane.T)*multiplier)
-								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
-								*(phi*phi*phi*multiplier) ))) > 0.5) and np.any(np.all(np.abs((np.array([
-								corner1, corner2, corner3, corner4, corner5, corner6, corner7, corner8]) 
-								- (chosen_center).dot(worldplane.T)*multiplier)
-								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
-								*(phi*phi*phi*multiplier) ))) < 0.5000001,axis=-1)):
-				neighbor_blocks.append(block)
-				# Represents a voxel on the boundary of our chosen chunk
-				dir1 = Vector3(dir1[0],dir1[1],dir1[2])
-				dir2 = Vector3(dir2[0],dir2[1],dir2[2])
-				dir3 = Vector3(dir3[0],dir3[1],dir3[2])
 		inside_blocks = []
-		for block in blocks:
-			if np.all(np.abs((np.array(block).dot(worldplane.T)*multiplier - (chosen_center)
-								.dot(worldplane.T)*multiplier)
-								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
-								*(phi*phi*phi*multiplier) ))) <= 0.5):
-				# Represents a voxel inside our chosen chunk
-				inside_blocks.append(block)
-				
-				face_origin = np.floor(block).dot(worldplane.T)*multiplier
-				face_tip = np.ceil(block).dot(worldplane.T)*multiplier
-				dir1,dir2,dir3 = np.eye(6)[np.nonzero(np.ceil(block)-np.floor(block))[0]].dot(worldplane.T)*multiplier
-				dir1 = Vector3(dir1[0],dir1[1],dir1[2])
-				dir2 = Vector3(dir2[0],dir2[1],dir2[2])
-				dir3 = Vector3(dir3[0],dir3[1],dir3[2])
+		axes_matrix = np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
+									*(phi*phi*phi*multiplier) )
+		worldplane_chunk_center = (chosen_center).dot(worldplane.T)*multiplier
+		block_center_in_chunk = np.all(np.abs((np.array(blocks).dot(worldplane.T)*multiplier 
+							- worldplane_chunk_center).dot( axes_matrix )) <= 0.5,axis=1)
+		for i in np.nonzero(block_center_in_chunk)[0]:
+			inside_blocks.append(blocks[i])
+		
+		# TODO This is one of the slowest parts.
+		# Each corner is being checked many times, once for 
+		# each neighboring block. Also maybe I could remove
+		# " * multiplier" everywhere.
+		face_origins = np.floor(blocks).dot(worldplane.T)*multiplier
+		face_tips = np.ceil(blocks).dot(worldplane.T)*multiplier
+		dirNs = np.eye(6)[np.nonzero(np.ceil(blocks)-np.floor(blocks))[1].reshape((-1,3))].dot(worldplane.T)*multiplier
+		dir1s, dir2s, dir3s = (dirNs[:,0], dirNs[:,1], dirNs[:,2])#.dot(np.array([[1.6,0,1,1.6,0,-1],[1,1.6,0,-1,1.6,0],[0,1,1.6,0,-1,1.6]]).T )
+		corner1s,corner2s,corner3s,corner4s,corner5s,corner6s,corner7s,corner8s = (
+				face_origins, face_tips, face_origins + dir1s, face_origins + dir2s, face_origins + dir3s,
+				face_tips - dir1s, face_tips - dir2s, face_tips - dir3s)
+		some_block_corner_in_chunk = np.any(np.all(np.abs((np.array([
+								corner1s, corner2s, corner3s, corner4s, corner5s, corner6s, corner7s, corner8s]) 
+								- worldplane_chunk_center).dot(axes_matrix)) < 0.5000001,axis=-1),axis=0)
+		for i in np.nonzero(1 - block_center_in_chunk)[0]:
+#			block = blocks[i]
+#			face_origin = np.floor(block).dot(worldplane.T)*multiplier
+#			face_tip = np.ceil(block).dot(worldplane.T)*multiplier
+#			dir1,dir2,dir3 = np.eye(6)[np.nonzero(np.ceil(block)-np.floor(block))[0]].dot(worldplane.T)*multiplier
+#			corner1,corner2,corner3,corner4,corner5,corner6,corner7,corner8 = (
+#				face_origin, face_tip, face_origin + dir1, face_origin + dir2, face_origin + dir3,
+#				face_tip - dir1, face_tip - dir2, face_tip - dir3)
+			if some_block_corner_in_chunk[i]:#np.any(np.all(np.abs((np.array([
+				#				corner1s[i], corner2s[i], corner3s[i], corner4s[i], corner5s[i], corner6s[i], corner7s[i], corner8s[i]]) 
+				#				- worldplane_chunk_center).dot(axes_matrix)) < 0.5000001,axis=-1)):
+				neighbor_blocks.append(blocks[i])
+				# Represents a voxel on the boundary of our chosen chunk
+				#dir1 = Vector3(dir1[0],dir1[1],dir1[2])
+				#dir2 = Vector3(dir2[0],dir2[1],dir2[2])
+				#dir3 = Vector3(dir3[0],dir3[1],dir3[2])
+		print("Found "+str(len(neighbor_blocks))+" blocks neighboring chunk")
+		print("Found "+str(len(inside_blocks))+" blocks inside the chunk")
 		all_owned_blocks = neighbor_blocks + inside_blocks
 		
 		# Now we want to calculate the validity bounds for this chunk.
@@ -325,51 +332,52 @@ class numpylattice(MeshInstance):
 		#print(constraints)
 		print("Wiggle room along the 15 axes:")
 		print(constraints[:15]+constraints[15:])
+		
 		print("Proposed new point inside the constraints:")
 		b = np.array([a[0]+r.random()/2-0.25,a[1]+r.random()/2-0.25,a[2]+r.random()/2-0.25,
 					a[3]+r.random()/2-0.25,a[4]+r.random()/2-0.25,a[5]+r.random()/2-0.25])
-		loop_counter = 0
-		prop_search_limit = 1000
-		
-		while np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((a-b).dot(normallel.T)) > 
-							constraints)and(loop_counter<prop_search_limit):
-			# Move the generated point toward the constraints by a random amount
-			# Get the min and max distances we need to move to get in this axis' constraints
-			divergence = b - a
-			rand_pos = r.random()
-			move = divergence * rand_pos
-			b = b - move
-			
-			if not np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((a-b).dot(normallel.T)) > constraints):
-				# Break early before we mess it up
-				break
-			loop_counter = loop_counter + 1
-		if loop_counter >= prop_search_limit:
-			# We failed to find one.
-			raise Exception("Overran loop_counter searching for an offset satisfying the constraints.")
-		print(b)
-		new_constraints = np.sum(np.stack(np.repeat([relevant_points - b],30,axis=0),axis=1).dot(normallel.T)
-			* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
-		print("New max constraint distance: "+str(np.max(np.abs(new_constraints))))
-		print("Predicted new max: "+str(np.max(
-			-0.9732489894677302 + np.max(np.sum(
-				(np.stack(np.repeat([relevant_points - a],30,axis=0),axis=1).dot(normallel.T) )
-				* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3)))
-			,axis=2),axis=0)
-			+ 0.9732489894677302 + np.dot(
-				np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),
-				(a-b).dot(normallel.T)
-			)
-			)))
-		print("Predicted to pass: "+str(np.all(
-			+ np.dot(
-				np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),
-				(a-b).dot(normallel.T))
-			< 0.9732489894677302 - np.max(np.sum(
-				(np.stack(np.repeat([relevant_points - a],30,axis=0),axis=1).dot(normallel.T) )
-				* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3)))
-			,axis=2),axis=0)
-			)))
+#		loop_counter = 0
+#		prop_search_limit = 1000
+#
+#		while np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((a-b).dot(normallel.T)) > 
+#							constraints)and(loop_counter<prop_search_limit):
+#			# Move the generated point toward the constraints by a random amount
+#			# Get the min and max distances we need to move to get in this axis' constraints
+#			divergence = b - a
+#			rand_pos = r.random()
+#			move = divergence * rand_pos
+#			b = b - move
+#
+#			if not np.any(np.concatenate([twoface_normals,-twoface_normals]).dot((a-b).dot(normallel.T)) > constraints):
+#				# Break early before we mess it up
+#				break
+#			loop_counter = loop_counter + 1
+#		if loop_counter >= prop_search_limit:
+#			# We failed to find one.
+#			raise Exception("Overran loop_counter searching for an offset satisfying the constraints.")
+#		print(b)
+#		new_constraints = np.sum(np.stack(np.repeat([relevant_points - b],30,axis=0),axis=1).dot(normallel.T)
+#			* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
+#		print("New max constraint distance: "+str(np.max(np.abs(new_constraints))))
+#		print("Predicted new max: "+str(np.max(
+#			-0.9732489894677302 + np.max(np.sum(
+#				(np.stack(np.repeat([relevant_points - a],30,axis=0),axis=1).dot(normallel.T) )
+#				* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3)))
+#			,axis=2),axis=0)
+#			+ 0.9732489894677302 + np.dot(
+#				np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),
+#				(a-b).dot(normallel.T)
+#			)
+#			)))
+#		print("Predicted to pass: "+str(np.all(
+#			+ np.dot(
+#				np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),
+#				(a-b).dot(normallel.T))
+#			< 0.9732489894677302 - np.max(np.sum(
+#				(np.stack(np.repeat([relevant_points - a],30,axis=0),axis=1).dot(normallel.T) )
+#				* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3)))
+#			,axis=2),axis=0)
+#			)))
 		return (b, constraints, chosen_center, neighbor_blocks, inside_blocks)
 	
 	def _ready(self):
@@ -1060,8 +1068,9 @@ class numpylattice(MeshInstance):
 		# At 10, takes like 51 seconds. At 11, I haven't waited long enough.
 		# Yet it doesn't cover all the possible centers even...
 		repetitions = 20000
-		time_limit_seconds = 60#10*60*60
+		time_limit_seconds = 12*60*60
 		inner_loop_upper_limit = 20000
+		next_save_time = 1*60*60
 		all_constraints = []
 		all_blocks = []
 		all_chunks = []
@@ -1072,19 +1081,31 @@ class numpylattice(MeshInstance):
 		if not Engine.editor_hint:
 			bb = a
 			fs = File()
-			# Below is an attempt to rescue the older data.
-#			for filename in ["res://chunklayouts 1","res://chunklayouts 2"]:
-#				fs.open(filename,fs.READ)
+			
+#			try:
+#				fs.open("res://chunklayouts",fs.READ)
 #				while not fs.eof_reached():
-#					# Get the next chosen_center string
+#					# relevant chunk as chosen_center string
 #					ch_c = fs.get_line()
-#					# Retrieve the 30 floats as a constraint array
+#					# Constraint is 30 floats
 #					cstts = np.zeros((30))
 #					for i in range(30):
-#						cstts[i] = fs.get_float()
-#					cstts = cstts.reshape((15,2))
-#					# Store the blocks in string form
-#					fs.store_string(all_blocks[i])
+#						cstts[i] = fs.get_real()
+#					# Numbers of inside blocks and outside blocks
+#					inside_ct = fs.get_32()
+#					outside_ct = fs.get_32()
+#					# Then retrieve the strings representing the blocks
+#					is_blocks = []
+#					os_blocks = []
+#					for i in range(inside_ct):
+#						is_blocks.append(fs.get_line())
+#					for i in range(outside_ct):
+#						fs.get_line()
+#			except Exception as e:
+#				print("Encountered some sort of problem saving.")
+#				print(e)
+#			fs.close()
+			
 			for i in range(repetitions):
 				b = bb.copy()
 				try:
@@ -1183,23 +1204,25 @@ class numpylattice(MeshInstance):
 					# It appears this inner loop is the slow part. Would be well worth it to 
 					# come up with these in a more thorough manner.
 					while (not generates_correct_chunk) and (counter < upper_limit):
-						_ = list(range(6))
+						_ = list(range(15))
 						r.shuffle(_)
 						for axis in _:
 							# Move the generated point toward the constraints by a random amount
 							#axis = r.randint(0,5)
 							# Get the min and max distances we need to move to get in this axis' constraints
 							divergence = center_guarantee[str(chosen_center)][axis] - twoface_normals[axis].dot(bb.dot(normallel.T))
-							rand_pos = r.random()
-							move = (divergence[0]*rand_pos + divergence[1]*(1-rand_pos))*twoface_normals[axis]
-							bb = bb + move.dot(normallel)
-							
-							generates_correct_chunk = (np.all(twoface_normals.dot(bb.dot(normallel.T)) 
-										> center_guarantee[str(chosen_center)][:,0] )
-									and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
-							if generates_correct_chunk:
-								# Break early before we mess it up
-								break
+							# Is it outside the constraints in this direction?
+							if divergence[0]*divergence[1] >= 0:
+								rand_pos = r.random()
+								move = (divergence[0]*rand_pos + divergence[1]*(1-rand_pos))*twoface_normals[axis]
+								bb = bb + move.dot(normallel)
+								
+								generates_correct_chunk = (np.all(twoface_normals.dot(bb.dot(normallel.T)) 
+											> center_guarantee[str(chosen_center)][:,0] )
+										and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
+								if generates_correct_chunk:
+									# Break early before we mess it up
+									break
 						counter = counter + 1
 						if time.perf_counter()-starttime > time_limit_seconds:
 							print("Exceeded overall time limit while in inner while loop.")
@@ -1222,6 +1245,31 @@ class numpylattice(MeshInstance):
 				if time.perf_counter()-starttime > time_limit_seconds:
 					print("Exceeded time limit in outer loop.")
 					break
+				if time.perf_counter()-starttime > next_save_time:
+					fs = File()
+					fs.open("res://chunklayouts_hourly"+str(round((time.perf_counter()-starttime)/(60*60),2)),fs.WRITE)
+					# For each successful loop:
+					for i in range(len(all_chunks)):
+						try:
+							# Store the relevant chunk as chosen_center string
+							fs.store_line(all_chosen_centers[i])
+							# Store the 30 floats
+							for f in all_constraints[i].flatten():
+								fs.store_real(f)
+							# First store the number of inside blocks and outside blocks
+							fs.store_line(str(len(all_blocks[i][0])))
+							fs.store_line(str(len(all_blocks[i][1])))
+							# Then store the blocks as strings
+							for block in all_blocks[i][0]:
+								fs.store_line(repr(list(block)))
+							for block in all_blocks[i][1]:
+								fs.store_line(repr(list(block)))
+						except Exception as e:
+							print("Encountered some sort of problem saving.")
+							print(e)
+							break
+					fs.close()
+					next_save_time = next_save_time + 60*60
 			#TODO Would be nice to combine constraint regions which produce the same
 			# chunk layout (some of which will be overlapping).
 			print("t="+str(time.perf_counter()-starttime))
@@ -1253,8 +1301,8 @@ class numpylattice(MeshInstance):
 					for f in all_constraints[i].flatten():
 						fs.store_real(f)
 					# First store the number of inside blocks and outside blocks
-					fs.store_32(len(all_blocks[i][0]))
-					fs.store_32(len(all_blocks[i][1]))
+					fs.store_line(str(len(all_blocks[i][0])))
+					fs.store_line(str(len(all_blocks[i][1])))
 					# Then store the blocks as strings
 					for block in all_blocks[i][0]:
 						fs.store_line(repr(list(block)))
@@ -1314,10 +1362,72 @@ class numpylattice(MeshInstance):
 	def _process(self,delta):
 		if not Engine.editor_hint:
 			debugging.breakpoint()
+			pass
 
-#class GoldenField:
-#	def __init__(self, shape):
-#		self.ndarray = 
-#
-#	def __repr__(self):
-#		return f"{self.__class__.__name__}()
+class GoldenField:
+	phi = 1.61803398874989484820458683
+	def __init__(self, values):
+		self.ndarray = np.array(values, dtype=np.int16)
+		if self.ndarray.shape[-1] != 2:
+			raise Exception("Not a valid golden field array; last axis must be of size 2.")
+	
+	def __repr__(self):
+		return f"{self.__class__.__name__}({list(self.ndarray)})"
+	
+	def __array__(self, dtype=None):
+		return self.ndarray[...,0]+self.phi*self.ndarray[...,1]
+	
+	def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+		if method == '__call__':
+			# Check if all integer
+			all_integer = True
+			for input in inputs:
+				if not isinstance(input,Integral):
+					if isinstance(input,np.ndarray):
+						if not (input.dtype.kind in ['u','i']):
+							all_integer = False
+					elif isinstance(input, self.__class__):
+						pass
+					else:
+						all_integer = False
+			if not all_integer:
+				# If we're not dealing with integers, there's no point in 
+				# staying a GoldenField.
+				return ufunc(np.array(self), *inputs, **kwargs)
+			
+			if ufunc == np.add:
+				returnval = np.zeros(self.ndarray.shape)
+				returnval = returnval + self.ndarray
+				for input in inputs:
+					if isinstance(input, self.__class__):
+						returnval = returnval + input.ndarray
+					else:
+						# Just add to the integer part
+						returnval[...,0] = returnval[...,0] + input
+				return self.__class__(returnval)
+			elif ufunc == np.multiply:
+				returnval = self.ndarray.copy()
+				for input in inputs:
+					intpart = np.zeros(self.ndarray[...,0].shape)
+					phipart = np.zeros(self.ndarray[...,0].shape)
+					if isinstance(input, self.__class__):
+						intpart = returnval[...,0] * input.ndarray[...,0]
+						phipart = returnval[...,0] * input.ndarray[...,1] + returnval[...,1] * input.ndarray[...,0]
+						intpart = intpart + returnval[...,1] * input.ndarray[...,1]
+						phipart = phipart + returnval[...,1] * input.ndarray[...,1]
+					elif isinstance(input, np.ndarray):
+						# Multiply both parts by the array
+						intpart = returnval[...,0] * input
+						phipart = returnval[...,1] * input
+					elif isinstance(input, numbers.Integral):
+						intpart = returnval[...,0] * input
+						phipart = returnval[...,1] * input
+					else:
+						return NotImplemented
+					returnval[...,0] = intpart
+					returnval[...,1] = phipart
+				return self.__class__(returnval)
+			else:
+				return NotImplemented
+		else:
+			return NotImplemented
