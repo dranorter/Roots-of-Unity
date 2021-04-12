@@ -20,8 +20,8 @@ class numpylattice(MeshInstance):
 		phi = 1.61803398874989484820458683
 		# Set up a 6D array holding 6-vectors which are their own coords
 		# w/in the array
-		esize = 10
-		offset = -5
+		esize = 14
+		offset = -7
 		embedding_space = np.indices((esize,esize,esize,esize,esize,esize),dtype=np.int8).T[...,-1::-1] + offset
 		# The basis for the worldplane
 		worldplane = np.array([[phi,0,1,phi,0,-1],[1,phi,0,-1,phi,0],[0,1,phi,0,-1,phi]])
@@ -256,14 +256,13 @@ class numpylattice(MeshInstance):
 		for i in np.nonzero(block_center_in_chunk)[0]:
 			inside_blocks.append(blocks[i])
 		
-		# TODO This is one of the slowest parts.
-		# Each corner is being checked many times, once for 
+		# TODO Each corner is being checked many times, once for 
 		# each neighboring block. Also maybe I could remove
 		# " * multiplier" everywhere.
 		face_origins = np.floor(blocks).dot(worldplane.T)*multiplier
 		face_tips = np.ceil(blocks).dot(worldplane.T)*multiplier
 		dirNs = np.eye(6)[np.nonzero(np.ceil(blocks)-np.floor(blocks))[1].reshape((-1,3))].dot(worldplane.T)*multiplier
-		dir1s, dir2s, dir3s = (dirNs[:,0], dirNs[:,1], dirNs[:,2])#.dot(np.array([[1.6,0,1,1.6,0,-1],[1,1.6,0,-1,1.6,0],[0,1,1.6,0,-1,1.6]]).T )
+		dir1s, dir2s, dir3s = (dirNs[:,0], dirNs[:,1], dirNs[:,2])
 		corner1s,corner2s,corner3s,corner4s,corner5s,corner6s,corner7s,corner8s = (
 				face_origins, face_tips, face_origins + dir1s, face_origins + dir2s, face_origins + dir3s,
 				face_tips - dir1s, face_tips - dir2s, face_tips - dir3s)
@@ -299,11 +298,28 @@ class numpylattice(MeshInstance):
 		# order to catch points nearby. Adding too many constraints doesn't seem
 		# like it will do much harm - I will just end up with multiple identical
 		# chunk templates. I can "glue together" the constraint regions.
-		relevance = np.all(np.abs((embedding_space[included].dot(worldplane.T)*multiplier 
-								- (chosen_center).dot(worldplane.T)*multiplier)
-								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
-								*(phi*phi*phi*multiplier) ))) < 1.0,axis=1)# Was "< 0.501"
-		relevant_points = embedding_space[included][relevance]
+		
+		
+#		relevance = np.all(np.abs((embedding_space[included].dot(worldplane.T)*multiplier 
+#								- (chosen_center).dot(worldplane.T)*multiplier)
+#								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
+#								*(phi*phi*phi*multiplier) ))) < 1.0,axis=1)# Was "< 0.501"
+#		relevant_points = embedding_space[included][relevance]
+		
+		# Gluing together constraints sounds hard, here's something more exact
+		face_origins_6d = np.floor(blocks)
+		face_tips_6d = np.ceil(blocks)
+		dirNs_6d = np.eye(6)[np.nonzero(np.ceil(blocks)-np.floor(blocks))[1].reshape((-1,3))]
+		dir1s_6d, dir2s_6d, dir3s_6d = (dirNs_6d[:,0], dirNs_6d[:,1], dirNs_6d[:,2])
+		c6d1s,c6d2s,c6d3s,c6d4s,c6d5s,c6d6s,c6d7s,c6d8s = (
+				face_origins_6d, face_tips_6d, face_origins_6d + dir1s_6d, face_origins_6d + dir2s_6d, face_origins_6d + dir3s_6d,
+				face_tips_6d - dir1s_6d, face_tips_6d - dir2s_6d, face_tips_6d - dir3s_6d)
+		relevant_points = np.concatenate([c6d1s[some_block_corner_in_chunk],
+						c6d2s[some_block_corner_in_chunk], c6d3s[some_block_corner_in_chunk],
+						c6d4s[some_block_corner_in_chunk], c6d5s[some_block_corner_in_chunk],
+						c6d6s[some_block_corner_in_chunk], c6d7s[some_block_corner_in_chunk],
+						c6d8s[some_block_corner_in_chunk]])
+		
 		# Recalculating just because it's fast and easier than trying to get the
 		# right numbers, arranged properly, out of the old "constraints" variable.
 		dists = np.sum(np.stack(np.repeat([relevant_points - a],30,axis=0),axis=1).dot(normallel.T)
@@ -388,8 +404,8 @@ class numpylattice(MeshInstance):
 		phi = 1.61803398874989484820458683
 		# Set up a 6D array holding 6-vectors which are their own coords
 		# w/in the array
-		esize = 10
-		offset = -5
+		esize = 14
+		offset = -7
 		#embedding_space = np.zeros((esize,esize,esize,esize,esize,esize,6),dtype=np.int8)
 		print("Creating embedding space; t="+str(time.perf_counter()-starttime))
 #		for index,x in np.ndenumerate(embedding_space[...,0]):
@@ -634,8 +650,15 @@ class numpylattice(MeshInstance):
 		deflation_faces = np.array(chunks)
 		near_centers = deflation_faces[
 			np.where(np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1)
-			< 8)[0]]
+			< 8)[0]]# should be 8
+		#0, 3, 5
 		chosen_center = near_centers[r.randint(0,near_centers.shape[0]-1)]
+		for center in near_centers:
+			halfaxes = np.nonzero(center - np.floor(center))[0]
+			print(halfaxes)
+			if np.all(halfaxes - np.array([0,3,5]) == 0):
+				chosen_center = center
+				break
 #		chosen_center = deflation_faces[
 #			np.where(np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1)
 #			== np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1).min())[0][0]]
@@ -650,8 +673,6 @@ class numpylattice(MeshInstance):
 		
 		# Now move the chosen chunk to center stage
 		print("Chosen chunk corner (will be sent to origin)"+str(chosen_origin))
-		print("First element of lines list:"+str(all_lines[0][0]))
-		print("First element of chunk lines list:"+str(deflated_lines[0][0]))
 		embedding_space = embedding_space - chosen_origin
 		chosen_center = chosen_center - chosen_origin
 		chunks = np.array(chunks) - chosen_origin
@@ -660,10 +681,11 @@ class numpylattice(MeshInstance):
 		all_lines = [[l - chosen_origin for l in ll] for ll in all_lines]
 		a = (a - chosen_origin).dot(squarallel)
 		chosen_origin = np.zeros(6)
+		print("New chunk center: "+str(chosen_center))
 		print("Corrected offset:")
 		print(a)
-		print("New first element of lines list:"+str(all_lines[0][0]))
-		print("New first element of chunk lines list:"+str(deflated_lines[0][0]))
+		print("Chunk axes:")
+		print(str(chosen_axis1)+", "+str(chosen_axis2)+","+str(chosen_axis3))
 		
 		multiplier = 4
 		array_mesh = ArrayMesh()
@@ -1049,16 +1071,19 @@ class numpylattice(MeshInstance):
 				center_origin+center_axis1,center_origin+center_axis2,center_origin+center_axis3,
 				center_origin+center_axis1+center_axis2,center_origin+center_axis1+center_axis3,center_origin+center_axis2+center_axis3,
 				center_origin+center_axis1+center_axis2+center_axis3])
-			# TODO I'm subtracting "a" and then adding it in again; should remove it from the calculation.
-			center_constraints = np.sum(np.stack(np.repeat([chunk_corners - a],30,axis=0),axis=1).dot(normallel.T)
+			# TODO I'm subtracting "fake_a" and then adding it in again; should remove it from the calculation.
+			# Also, this was originally using plain old "a", which could end up outside the constraints. Wouldn't that
+			# cause a huge problem??
+			fake_a = np.sum(chunk_corners,axis=0)/8
+			center_constraints = np.sum(np.stack(np.repeat([chunk_corners - fake_a],30,axis=0),axis=1).dot(normallel.T)
 					* np.concatenate(np.array([twoface_normals,-twoface_normals]).reshape((1,30,3))),axis=2)
 			overall_center_constraints = 0.9732489894677302/(phi*phi*phi) - np.max(center_constraints,axis=0)
 			translated_constraints = (overall_center_constraints*np.concatenate([-np.ones(15),np.ones(15)]) 
-					+ np.concatenate([twoface_normals,twoface_normals]).dot(a.dot(normallel.T)))
+					+ np.concatenate([twoface_normals,twoface_normals]).dot(fake_a.dot(normallel.T)))
 			translated_constraints = (translated_constraints).reshape((2,15)).T
 			center_guarantee[str(center)] = translated_constraints
 		print(center_guarantee.keys())
-		#'[ 1.   0.5  1.5  1.  -0.5  0. ]'
+		
 		constraints_sorted = dict()
 		for center in possible_centers:
 			constraints_sorted[center] = []
@@ -1067,10 +1092,12 @@ class numpylattice(MeshInstance):
 		# Repetition counts above 10 mysteriously take forever.
 		# At 10, takes like 51 seconds. At 11, I haven't waited long enough.
 		# Yet it doesn't cover all the possible centers even...
-		repetitions = 20000
-		time_limit_seconds = 12*60*60
-		inner_loop_upper_limit = 20000
+		repetitions = 30000
+		time_limit_seconds = 14*60*60
+		inner_loop_upper_limit = 600000
 		next_save_time = 1*60*60
+		do_load = False
+		
 		all_constraints = []
 		all_blocks = []
 		all_chunks = []
@@ -1080,44 +1107,53 @@ class numpylattice(MeshInstance):
 		all_sorted_constraints = []
 		if not Engine.editor_hint:
 			bb = a
-			fs = File()
+			if do_load:
+				fs = File()
+				
+				print("Loading from existing file...")
+				try:
+					fs.open("res://chunklayouts",fs.READ)
+					while not fs.eof_reached():
+						# relevant chunk as chosen_center string
+						ch_c = str(fs.get_line())
+						# Constraint is 30 floats
+						cstts = np.zeros((30))
+						for i in range(30):
+							cstts[i] = fs.get_real()
+						cstts = cstts.reshape((15,2))
+						# Numbers of inside blocks and outside blocks
+						inside_ct = int(str(fs.get_line()))
+						outside_ct = int(str(fs.get_line()))
+						# Then retrieve the strings representing the blocks
+						is_blocks = []
+						os_blocks = []
+						for i in range(inside_ct):
+							is_blocks.append(eval(str(fs.get_line())))
+						for i in range(outside_ct):
+							os_blocks.append(eval(str(fs.get_line())))
+
+						#TODO Check here for overlap with existing constraints.
+
+						ch_c_live = possible_centers_live[possible_centers.index(ch_c)]
+						all_constraints.append(cstts)
+						constraints_sorted[ch_c].append(cstts)
+						all_sorted_constraints.append(str((ch_c_live,cstts)))
+						all_chunks.append(str((ch_c_live, is_blocks, os_blocks)))
+						all_blocks.append((is_blocks,os_blocks))
+						all_chosen_centers.append(ch_c)
+						for block in is_blocks:
+							all_block_axes.append(str(block - np.floor(block)))
+				except Exception as e:
+					print("Encountered some sort of problem loading.")
+					print(e)
+				fs.close()
+
+				print("t="+str(time.perf_counter()-starttime))
+				print("Loaded existing constraints file.")
+				print("Loaded "+str(len(all_constraints))+" constraints.")
+				print("Constraint counts for each possible chunk: "+str([len(x) for x in constraints_sorted.values()]))
 			
-#			try:
-#				fs.open("res://chunklayouts",fs.READ)
-#				while not fs.eof_reached():
-#					# relevant chunk as chosen_center string
-#					ch_c = str(fs.get_line())
-#					# Constraint is 30 floats
-#					cstts = np.zeros((30))
-#					for i in range(30):
-#						cstts[i] = fs.get_real()
-#					cstts = cstts.reshape((15,2))
-#					# Numbers of inside blocks and outside blocks
-#					inside_ct = int(fs.get_line())
-#					outside_ct = int(fs.get_line())
-#					# Then retrieve the strings representing the blocks
-#					is_blocks = []
-#					os_blocks = []
-#					for i in range(inside_ct):
-#						is_blocks.append(eval(str(fs.get_line())))
-#					for i in range(outside_ct):
-#						os_blocks.append(eval(str(fs.get_line()))
-#					
-#					#TODO Check here for overlap with existing constraints.
-#					
-#					ch_c_live = possible_centers_live[possible_centers.index(ch_c)]
-#					all_constraints.append(cstts)
-#					constraints_sorted[ch_c].append(cstts)
-#					all_sorted_constraints.append(str((ch_c_live,cstts)))
-#					all_chunks.append(str((ch_c_live, is_blocks, os_blocks)))
-#					all_blocks.append((is_blocks,os_blocks))
-#					all_chosen_centers.append(ch_c)
-#					for block in interior_blocks:
-#						all_block_axes.append(str(block - np.floor(block)))
-#			except Exception as e:
-#				print("Encountered some sort of problem saving.")
-#				print(e)
-#			fs.close()
+			#debugging.breakpoint()
 			
 			for i in range(repetitions):
 				b = bb.copy()
@@ -1194,6 +1230,18 @@ class numpylattice(MeshInstance):
 				bb = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
 				bb = bb*2 - 1
 				bb = bb.dot(squarallel)
+				# Constraint counts for each possible chunk:
+				#    0    1    2    3    4    5    6    7    8    9   10   11   12   13   14   15   16   17   18   19
+				# [229, 228, 528, 528, 228, 455, 527, 228, 525, 228, 526, 528, 228, 228, 229, 460, 228, 228, 450, 458]
+				# [230, 228, 528, 528, 228, 456, 528, 228, 525, 228, 526, 528, 228, 228, 229, 460, 228, 228, 450, 458]
+				# [230, 229, 528, 528, 228, 456, 528, 228, 528, 228, 528, 528, 228, 228, 229, 460, 228, 228, 450, 458]
+				# [230, 229, 528, 528, 228, 456, 528, 228, 528, 228, 528, 528, 228, 228, 229, 460, 228, 228, 450, 459]
+				# [230, 229, 528, 528, 228, 456, 528, 228, 528, 228, 528, 528, 228, 228, 229, 460, 228, 228, 450, 460]
+				# [228, 228, 270, 268, 228, 270, 270, 228, 270, 228, 270, 270, 228, 228, 227, 268, 228, 228, 269, 269] # diff. relevancy
+				# [228, 228, 270, 268, 228, 270, 270, 228, 270, 228, 270, 270, 228, 228, 229, 269, 228, 228, 270, 269]
+				# [228, 227, 270, 269, 228, 270, 270, 228, 269, 228, 270, 269, 228, 228, 228, 270, 228, 228, 270, 269]
+				# [228, 228, 271, 270, 228, 270, 270, 228, 270, 228, 270, 269, 228, 228, 228, 270, 228, 228, 270, 269]
+				# [228, 228, 270, 270, 228, 270, 270, 228, 270, 228, 270, 270, 228, 228, 228, 270, 228, 228, 270, 270]
 				chosen_center = r.choice(possible_centers_live)
 				print("...")
 				print("New target chunk: "+str(chosen_center))
@@ -1217,25 +1265,20 @@ class numpylattice(MeshInstance):
 					# It appears this inner loop is the slow part. Would be well worth it to 
 					# come up with these in a more thorough manner.
 					while (not generates_correct_chunk) and (counter < upper_limit):
-						_ = list(range(15))
-						r.shuffle(_)
-						# TODO In reality, IIUC, there are only three constraint
-						# axes per chunk which are relevant; the constraints make
-						# the shape of a chunk. I believe my current method of
-						# randomization ends up with fewer points near corners
-						# because the different axes are correlated. But if we
-						# could find the three relevant axes and use them as
-						# a basis, we should be able to evently distribute the
-						# random exploration.
-						for axis in _:
-							# Move the generated point toward the constraints by a random amount
-							#axis = r.randint(0,5)
-							# Get the min and max distances we need to move to get in this axis' constraints
-							divergence = center_guarantee[str(chosen_center)][axis] - twoface_normals[axis].dot(bb.dot(normallel.T))
-							# Is it outside the constraints in this direction?
+						chosen_center = r.choice(possible_centers_live)
+						ch3_member = np.ceil(chosen_center)-np.floor(chosen_center)
+						three_axes = np.nonzero(np.ceil(chosen_center)-np.floor(chosen_center))[0]
+						constraint_dims = np.nonzero(1-np.any(twoface_axes - ch3_member > 0,axis=1))[0]
+						# constraint_dims gives us indices into center_guarantee as well as twoface_axes,
+						# twoface_normals and twoface_projected.
+						for i in constraint_dims:
+							third_axis = np.nonzero(ch3_member - twoface_axes[i])[0][0]
+							axis_scale = np.eye(6)[third_axis].dot(normallel.T).dot(twoface_normals[i])
+							divergence = center_guarantee[str(chosen_center)][i] - twoface_normals[i].dot(bb.dot(normallel.T))
+							# Is point outside the constraints in this direction?
 							if divergence[0]*divergence[1] >= 0:
 								rand_pos = r.random()
-								move = (divergence[0]*rand_pos + divergence[1]*(1-rand_pos))*twoface_normals[axis]
+								move = (divergence[0]*rand_pos + divergence[1]*(1-rand_pos))*np.eye(6)[third_axis].dot(normallel.T)/axis_scale
 								bb = bb + move.dot(normallel)
 								
 								generates_correct_chunk = (np.all(twoface_normals.dot(bb.dot(normallel.T)) 
@@ -1244,6 +1287,34 @@ class numpylattice(MeshInstance):
 								if generates_correct_chunk:
 									# Break early before we mess it up
 									break
+						
+#						_ = list(range(15))
+#						r.shuffle(_)
+#						# TODO In reality, IIUC, there are only three constraint
+#						# axes per chunk which are relevant; the constraints make
+#						# the shape of a chunk. I believe my current method of
+#						# randomization ends up with fewer points near corners
+#						# because the different axes are correlated. But if we
+#						# could find the three relevant axes and use them as
+#						# a basis, we should be able to evently distribute the
+#						# random exploration.
+#						for axis in _:
+#							# Move the generated point toward the constraints by a random amount
+#							#axis = r.randint(0,5)
+#							# Get the min and max distances we need to move to get in this axis' constraints
+#							divergence = center_guarantee[str(chosen_center)][axis] - twoface_normals[axis].dot(bb.dot(normallel.T))
+#							# Is it outside the constraints in this direction?
+#							if divergence[0]*divergence[1] >= 0:
+#								rand_pos = r.random()
+#								move = (divergence[0]*rand_pos + divergence[1]*(1-rand_pos))*twoface_normals[axis]
+#								bb = bb + move.dot(normallel)
+#
+#								generates_correct_chunk = (np.all(twoface_normals.dot(bb.dot(normallel.T)) 
+#											> center_guarantee[str(chosen_center)][:,0] )
+#										and np.all(twoface_normals.dot(bb.dot(normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
+#								if generates_correct_chunk:
+#									# Break early before we mess it up
+#									break
 						counter = counter + 1
 						if time.perf_counter()-starttime > time_limit_seconds:
 							print("Exceeded overall time limit while in inner while loop.")
@@ -1297,10 +1368,10 @@ class numpylattice(MeshInstance):
 			print("After "+str(len(all_counters))+" tries,")
 			print(str(len(all_chunks))+" chunk layouts generated. Repeats:")
 			print(len(all_chunks)-len(set(all_chunks)))
-			print(str(len(set([str(tup) for tup in all_blocks])))+" unique layouts.")#2298 unique layouts.
-			print(str(len(all_constraints))+" constraints generated. Repeats:")
-			print(len(all_constraints)-len(set([str(x) for x in all_constraints])))
-			print(str(len(set([str(x) for x in all_constraints])))+" unique constraints. (No check for overlap or subset/superset.)")
+			print(str(len(set([str(tup) for tup in all_blocks])))+" unique layouts.")#4984 unique layouts.
+			print(str(len(all_constraints))+" constraints generated.")#Repeats:
+			#print(len(all_constraints)-len(set([str(x) for x in all_constraints])))
+			#print(str(len(set([str(x) for x in all_constraints])))+" unique constraints. (No check for overlap or subset/superset.)")
 			
 			print("Max loops required: "+str(max(all_counters)))
 			all_counters = np.array(all_counters)
