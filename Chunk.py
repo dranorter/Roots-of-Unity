@@ -451,16 +451,16 @@ class Chunk(MeshInstance):
 		
 		for superchunk in hits:
 			i, offset = superchunk
-			multiplier = 1
+			multiplier = math.pow(self.phi,3)
 			st = SurfaceTool()
 			
 			st.begin(Mesh.PRIMITIVE_LINES)
 			st.add_color(Color(1,.2,1))
-			for block in (np.array(all_blocks[i][1]) - offset)*math.pow(self.phi,3):
-				face_origin = np.floor(block).dot(self.worldplane.T)
-				face_tip = np.ceil(block).dot(self.worldplane.T)
-				dir1,dir2,dir3 = np.eye(6)[np.nonzero(np.ceil(block/math.pow(self.phi,3))
-								-np.floor(block/math.pow(self.phi,3)))[0]].dot(self.worldplane.T)
+			for block in (np.array(all_blocks[i][1]) - offset):#*math.pow(self.phi,3):
+				face_origin = np.floor(block).dot(self.worldplane.T)*multiplier
+				face_tip = np.ceil(block).dot(self.worldplane.T)*multiplier
+				dir1,dir2,dir3 = np.eye(6)[np.nonzero(np.ceil(block)
+								-np.floor(block))[0]].dot(self.worldplane.T)*multiplier
 				corner1,corner2,corner3,corner4,corner5,corner6,corner7,corner8 = (
 					face_origin, face_tip, face_origin + dir1, face_origin + dir2, face_origin + dir3,
 					face_tip - dir1, face_tip - dir2, face_tip - dir3
