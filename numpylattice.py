@@ -650,7 +650,7 @@ class numpylattice(MeshInstance):
 		deflation_faces = np.array(chunks)
 		near_centers = deflation_faces[
 			np.where(np.linalg.norm(deflation_faces.dot(worldplane.T),axis=1)
-			< 8)[0]]# should be 8
+			< 8)[0]]
 		#0, 3, 5
 		chosen_center = near_centers[r.randint(0,near_centers.shape[0]-1)]
 		for center in near_centers:
