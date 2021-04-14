@@ -10,7 +10,6 @@ config_version=4
 
 _global_script_classes=[  ]
 _global_script_class_icons={
-
 }
 
 [application]
@@ -25,7 +24,7 @@ debugging="*res://debugging.py"
 
 [editor_plugins]
 
-enabled=PoolStringArray( "pythonscript_repl", "repl" )
+enabled=PoolStringArray( "res://addons/pythonscript_repl/plugin.cfg" )
 
 [gdnative]
 

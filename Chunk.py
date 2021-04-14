@@ -204,7 +204,7 @@ class Chunk(MeshInstance):
 	def _ready(self):
 		starttime = time.perf_counter()
 		
-		self.convert_chunklayouts()
+		#self.convert_chunklayouts()
 		
 		print("Loading from existing file...")
 		fs = File()
@@ -242,6 +242,79 @@ class Chunk(MeshInstance):
 		print("Done loading "+str(len(all_constraints))+" templates")
 		print(time.perf_counter()-starttime)
 		
+		# Interesting note: Though all constraints are unique, they consist
+		# of a very limited set, of just 11 numbers (6 after absolute value).
+		# Well, with no rounding, it's 633 numbers...
+		# Despite this, all but 100 of the 4980 constraints can be distinguished 
+		# by which numbers are present, together with sign. (All can be 
+		# distinguished if we leave out the rounding.)
+		constraint_numsets = []
+		numset_counts = []
+		numset_members = []
+		numset_ids = []
+		constraint_numbers = set()
+		for i in range(len(all_constraints)):
+			match = False
+			center = self.possible_centers_live[self.possible_centers.index(all_chosen_centers[i])]
+			center_axes = 1-np.array(center - np.floor(center))*2
+			center_origin = center - np.array(self.deflation_face_axes).T.dot(center_axes)/2
+			center_axis1 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][0]])
+			center_axis2 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][1]])
+			center_axis3 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][2]])
+			chunk_corners = np.array([center_origin,
+				center_origin+center_axis1,center_origin+center_axis2,center_origin+center_axis3,
+				center_origin+center_axis1+center_axis2,center_origin+center_axis1+center_axis3,center_origin+center_axis2+center_axis3,
+				center_origin+center_axis1+center_axis2+center_axis3])
+			# We consider all translations, since different chunks have the origin
+			# at different corners.
+			for corner in chunk_corners:
+				shift = (-corner).dot(self.normallel.T)
+				shifted_constraints = all_constraints[i] + np.repeat(shift.dot(self.twoface_normals.T).reshape(15,1),2,axis=1)
+				#str_c = [str(pair) for pair in np.array(all_constraints[i])]
+				str_c = np.abs(np.round(shifted_constraints,13)).flatten().tolist()
+				for num in str_c: constraint_numbers.add(num)
+				str_c.sort()
+				str_c = str(str_c)
+				if str_c not in set(constraint_numsets):
+					constraint_numsets.append(str_c)
+					numset_counts.append(1)
+					numset_members.append([i])
+					match = True
+				else:
+					numset_counts[constraint_numsets.index(str_c)] += 1
+					numset_members[constraint_numsets.index(str_c)].append(i)
+					numset_ids.append(i)
+					#print("Match with "+str(all_constraints[i]))
+		print(str(len(constraint_numbers))+" constraint numbers.")
+		print(str(len(constraint_numsets))+" constraint numsets.")
+		print(str(len([x for x in numset_counts if x == 1]))+" lonely chunks.")
+		
+		first_sixer = numset_counts.index(18)
+		
+		for i in numset_members[first_sixer]:
+			print(np.round(all_constraints[i],5))
+			# Waste time so we can print
+			for j in range(5000000):
+				_ = i + j
+				_ = _ * _ * _ * _
+			print(all_chosen_centers[i])
+			print(i)
+		
+		numset_counts.sort()
+		print(numset_counts)
+#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -2.0816681711721685e-16], [0.1419951170682907, 0.22975291311740875], [1.9081958235744878e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [3.469446951953614e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [2.498001805406602e-16, 0.1419951170682907], [-0.1419951170682907, -3.400058012914542e-16], [1.8041124150158794e-16, 0.1419951170682907]]
+#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [3.7470027081099033e-16, 0.08775780349969864], [0.1419951170682907, 0.22975291311740875], [-0.08775780349969864, -3.677613769070831e-16], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -3.3306690738754696e-16], [0.08775780349969864, 0.1419951170682907], [3.608224830031759e-16, 0.1419951170682907], [-0.1419951170682907, -3.3306690738754696e-16], [1.3877787807814457e-16, 0.1419951170682907]]
+#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [2.7755575615628914e-16, 0.08775780349969864], [0.1419951170682907, 0.22975291311740875], [1.6653345369377348e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -1.249000902703301e-16], [0.08775780349969864, 0.1419951170682907], [2.0816681711721685e-16, 0.1419951170682907], [-0.1419951170682907, -4.2327252813834093e-16], [4.0245584642661925e-16, 0.1419951170682907]]
+#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -3.469446951953614e-16], [0.1419951170682907, 0.22975291311740875], [-0.08775780349969864, -1.942890293094024e-16], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [2.3592239273284576e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [3.0531133177191805e-16, 0.1419951170682907], [-0.1419951170682907, -3.885780586188048e-16], [2.498001805406602e-16, 0.1419951170682907]]
+#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [2.498001805406602e-16, 0.08775780349969864], [0.1419951170682907, 0.22975291311740875], [-0.08775780349969864, -2.983724378680108e-16], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [4.996003610813204e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [3.95516952522712e-16, 0.1419951170682907], [-0.1419951170682907, -2.7755575615628914e-16], [3.469446951953614e-16, 0.1419951170682907]]
+#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -1.8041124150158794e-16], [0.1419951170682907, 0.22975291311740875], [2.220446049250313e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -3.608224830031759e-16], [0.08775780349969864, 0.1419951170682907], [3.191891195797325e-16, 0.1419951170682907], [-0.1419951170682907, -4.0245584642661925e-16], [3.400058012914542e-16, 0.1419951170682907]]
+		
+#		ordered_str = [[str(pair) for pair in np.round(np.array(all_constraints[u]))] for u in numset_ids]
+#		for i in range(len(all_constraints)):
+#
+#			permutation = [ordered_str.index(x) for x in [str(pair) for pair in np.array(all_constraints[i])]]
+#			print(permutation)
+		
 		# TODO Need to experiment more with faster loading methods for these.
 		
 #		possible_blocks = set()
@@ -273,7 +346,8 @@ class Chunk(MeshInstance):
 #		print(time.perf_counter()-starttime)
 		
 		# Choose one chunk to display
-		chunk_num = r.choice(range(len(all_blocks)))
+		#chunk_num = r.choice(range(len(all_blocks)))
+		chunk_num = first_sixer
 		chosen_center = self.possible_centers_live[self.possible_centers.index(all_chosen_centers[chunk_num])]
 		inside_blocks = all_blocks[chunk_num][0]
 		outside_blocks = all_blocks[chunk_num][1]
@@ -376,7 +450,6 @@ class Chunk(MeshInstance):
 		for center in self.possible_centers_live:
 			center_axes = 1-np.array(center - np.floor(center))*2
 			center_origin = center - np.array(self.deflation_face_axes).T.dot(center_axes)/2
-			print("Origin (should be zeros): "+str(center_origin))
 			center_axis1 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][0]])
 			center_axis2 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][1]])
 			center_axis3 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][2]])
