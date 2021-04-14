@@ -5,6 +5,7 @@ import random as r
 import numpy as np
 import numbers, time, math
 from debugging import debugging
+import traceback
 
 COLOR = ResourceLoader.load("res://new_spatialmaterial.tres")
 
@@ -32,6 +33,7 @@ class Chunk(MeshInstance):
 	twoface_axes = np.array([[1,1,0,0,0,0],[1,0,1,0,0,0],[1,0,0,1,0,0],[1,0,0,0,1,0],[1,0,0,0,0,1],
 			[0,1,1,0,0,0],[0,1,0,1,0,0],[0,1,0,0,1,0],[0,1,0,0,0,1],[0,0,1,1,0,0],
 			[0,0,1,0,1,0],[0,0,1,0,0,1],[0,0,0,1,1,0],[0,0,0,1,0,1],[0,0,0,0,1,1]])
+	# (1 6 2) (3 8 12) (4 9 10) (5 7 11) (13 14 15) = all ch3[0], diff. splits btw ch3[0] and ch3[14], all ch3[14].
 	twoface_projected = np.array([
 				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 0]],
 				normallel.T[np.nonzero(twoface_axes)[1][np.nonzero(twoface_axes)[0] == 1]],
@@ -73,6 +75,25 @@ class Chunk(MeshInstance):
 		[0, 0, 0, 0, 0, 1],
 		[0, 0, 0, 1, 0, 0]
 	]
+	const_rot1 = [
+		[0, 0, 0, 0, 0, 1, 0, 0 ,0 ,0 ,0 ,0 ,0 ,0 ,0],
+		[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+		[0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+		[0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
+		[0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+		
+		[0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+		[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
+		[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+		[0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+		[0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+		
+		[0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0 ,0 ,0 ,0],
+		[0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+		[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+		[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+		[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]
+	]
 	chunk_rot2 = [
 		[0, 0, 1, 0, 0, 0],
 		[1, 0, 0, 0, 0, 0],
@@ -81,9 +102,24 @@ class Chunk(MeshInstance):
 		[0, 0, 0, 1, 0, 0],
 		[0, 0, 0, 0, 1, 0]
 	]
+	chunk_rot3 = [
+		
+	]
 	
 	def convert_chunklayouts(self,filename="res://chunklayouts_perf_14"):
+		
+		# TODO Identify all the blocks which are always present,
+		# then exclude those when saving, so they don't have to be loaded.
+		# Save them in a separate (and of course human-readable) file, or maybe
+		# as a first element in the layouts file.
+		# TODO Figure out all the rotation matrices mapping between chunk
+		# orientations, so that I can save 1/10th as many of these templates.
+		# Also, check if other symmetries apply - individual chunks are
+		# rotationally symmetrical too.
 		fs = File()
+		constraints_sorted = dict()
+		for center in self.possible_centers:
+			constraints_sorted[center] = []
 		all_constraints = []
 		all_blocks = []
 		all_chunks = []
@@ -91,6 +127,11 @@ class Chunk(MeshInstance):
 		all_chosen_centers = []
 		all_block_axes = []
 		all_sorted_constraints = []
+		dupecounter = 0
+		transformations = [(np.eye(6),np.eye(15)),
+			(np.array(self.chunk_rot1),np.array(self.const_rot1)),
+			(np.array(self.chunk_rot2),np.array(self.const_rot1).T)]
+		
 		for layout_file in [filename]:
 			try:
 				fs.open(layout_file,fs.READ)
@@ -113,24 +154,42 @@ class Chunk(MeshInstance):
 					for i in range(inside_ct):
 						is_blocks.append(eval(str(fs.get_line())))
 					for i in range(outside_ct):
-						os_blocks.append(eval(str(fs.get_line())))
-
-					ch_c_live = self.possible_centers_live[self.possible_centers.index(ch_c)]
-					constraint_string = str((ch_c_live,cstts))
-					if constraint_string not in all_sorted_constraints:
-						all_constraints.append(cstts)
-						constraints_sorted[ch_c].append(cstts)
-						all_sorted_constraints.append(str((ch_c_live,cstts)))
-						all_chunks.append(str((ch_c_live, is_blocks, os_blocks)))
-						all_blocks.append((is_blocks,os_blocks))
-						all_chosen_centers.append(ch_c)
-						for block in is_blocks:
-							all_block_axes.append(str(block - np.floor(block)))
+						# Remove redundancy: inside blocks shouldn't also be outside
+						# blocks. How does this even happen?
+						osb = eval(str(fs.get_line()))
+#						in_isb = False
+#						for j in range(inside_ct):
+#							if np.all(np.array(is_blocks[j]) - np.array(osb) == 0):
+#								in_isb = True
+#								continue
+						os_blocks.append(osb)
+					for m,n in transformations:
+						ch_c_live = self.possible_centers_live[self.possible_centers.index(ch_c)]
+						ch_c_live = m.dot(ch_c_live)
+						t_ch_c = str(ch_c_live)
+						t_cstts = n.dot(cstts)
+						t_is_blocks = m.dot(np.array(is_blocks).T).tolist()
+						t_os_blocks = m.dot(np.array(os_blocks).T).tolist()
+						
+						constraint_string = str((ch_c_live,t_cstts))
+						if constraint_string not in all_sorted_constraints:
+							all_constraints.append(t_cstts)
+							constraints_sorted[t_ch_c].append(t_cstts)
+							all_sorted_constraints.append(str((ch_c_live,t_cstts)))
+							all_chunks.append(str((ch_c_live, t_is_blocks, t_os_blocks)))
+							all_blocks.append((t_is_blocks,t_os_blocks))
+							all_chosen_centers.append(t_ch_c)
+							for block in t_is_blocks:
+								all_block_axes.append(str(block - np.floor(block)))
+						else:
+							dupecounter += 1
+							print("Found duplicate under rotation "+m)
 					print("Loading chunklayouts..."+str(round(100*sum([len(x) for x in constraints_sorted.values()])/5000))+"%")
 			except Exception as e:
 				print("Encountered some sort of problem loading.")
-				print(e)
+				traceback.print_exc()
 			fs.close()
+			print("Duplicates due to symmetry: "+str(dupecounter))
 		#print("Constraint counts for each possible chunk: "+str([len(x) for x in constraints_sorted.values()]))
 		#print(time.perf_counter()-starttime)
 		
@@ -144,6 +203,9 @@ class Chunk(MeshInstance):
 	
 	def _ready(self):
 		starttime = time.perf_counter()
+		
+		self.convert_chunklayouts()
+		
 		print("Loading from existing file...")
 		fs = File()
 		
@@ -396,6 +458,17 @@ class Chunk(MeshInstance):
 		chunk_axes_inv = np.linalg.inv(np.array(self.deflation_face_axes).T)
 		chunk_axes_inv_seed = chunk_axes_inv.dot(seed)
 		print("Using chunk inverse: "+str(chunk_axes_inv.dot(chosen_center)))
+		print("Rescaled seed: "+str(chunk_axes_inv_seed))
+		print("Rescaled seed, made perpendicular: "+str(chunk_axes_inv_seed.dot(self.squarallel)))
+		
+		# Does this seed fall within our constraint region?
+		print(str(np.any([np.all(self.twoface_normals.dot(chunk_axes_inv_seed.dot(self.normallel.T)) >= center_guarantee[chunk][:,0] )
+					and np.all(self.twoface_normals.dot(chunk_axes_inv_seed.dot(self.normallel.T)) <= center_guarantee[chunk][:,1])
+					for chunk in self.possible_centers])))
+		positive_seed = chunk_axes_inv_seed + (chunk_axes_inv_seed < 0)
+		print(str(np.any([np.all(self.twoface_normals.dot(positive_seed.dot(self.normallel.T)) >= center_guarantee[chunk][:,0] )
+					and np.all(self.twoface_normals.dot(positive_seed.dot(self.normallel.T)) <= center_guarantee[chunk][:,1])
+					for chunk in self.possible_centers])))
 		
 		# With the chunk and seed mapped down to block size, we can picture the old blocks present
 		# as sub-blocks -- points which could be included in the grid if we widened the neighbor
@@ -426,9 +499,27 @@ class Chunk(MeshInstance):
 		# that we are a boundary chunk shared by several superchunks. (We also 
 		# suspect there must be a faster procedure than checking all the translations.)
 		
+		# I realize all of that was basically repeated from the comment block 
+		# before, but it's very late and writing it out helped.
+		
+		# OK, the procedure isn't identifying a single unique superchunk, but
+		# I think the reason is that some blocks have their centers exactly on
+		# the edges of chunks. I want to try and tweak my chunk template files
+		# to fix this -- how do I do that? Systematically searching for examples
+		# would consist of generating translated versions of the template 
+		# constraints, corresponding to each block in the chunk; then checking for
+		# overlap amongst all chunks, between constraints coming from blocks
+		# of the same orientation and shape. Realistically I should store all
+		# the translated constraints anyway, sorted by block shape, and have some
+		# fast lookup method for identifying which (template, translation) pair
+		# a given offset falls within. 
+		# I should be able to introduce a rule for which chunk "owns" a block
+		# within such a lookup method.
+		
 		chunk_as_block_center = np.round(chunk_axes_inv.dot(chosen_center)*2)/2.0
 		
-		hits = []
+		inside_hits = []
+		outside_hits = []
 		for i in range(len(all_blocks)):
 			#TODO: Load all parent chunks?
 			inside_blocks = np.array(all_blocks[i][0])
@@ -440,10 +531,54 @@ class Chunk(MeshInstance):
 				# Calculate translated seed
 				translated_seed = (chunk_axes_inv_seed + block).dot(self.squarallel)
 				# Does it fall in the constraints?
-				if (np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) > constraint[:,0] )
-								and np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) < constraint[:,1])):
-					print("This would work: template#"+str(i)+", offset "+str(block))
-					hits.append((i, block))
+				if (np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) >= constraint[:,0] )
+								and np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) <= constraint[:,1])):
+					print("Actually inside this: template#"+str(i)+", offset "+str(block))
+					inside_hits.append((i, block))
+		# Checking outside blocks takes a lot longer, we only want to  do it if we need to
+		if len(inside_hits) == 0:
+			for i in range(len(all_blocks)):
+				outside_blocks = np.array(all_blocks[i][1])
+				constraint = np.array(all_constraints[i])
+				aligned_blocks = outside_blocks[np.nonzero(np.all(outside_blocks - chunk_as_block_center
+					- np.round(outside_blocks - chunk_as_block_center) == 0,axis=1))[0]]
+				if len(list(aligned_blocks)) == 0:
+					#print("Somehow no aligned blocks on template#"+str(i))
+					continue
+				block_offsets = aligned_blocks - chunk_as_block_center
+				translated_seeds = (chunk_axes_inv_seed + block_offsets).dot(self.normallel.T)
+				a_hit = np.all([np.all(self.twoface_normals.dot( translated_seeds.T ).T >= constraint[:,0],axis=1),
+						np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=1)],axis=0)
+				if np.any(a_hit):
+					print("Some sort of neighbor block hit! ")
+					outside_hits = [(i,block_offsets[i]) for i in np.nonzero(a_hit)[0]]
+					break
+		if len(inside_hits) == 0 and len(outside_hits) == 0:
+			# The slow way
+			print("Trying exhaustive search")
+			for i in range(len(all_blocks)):
+				outside_blocks = np.array(all_blocks[i][1])
+				constraint = np.array(all_constraints[i])
+				aligned_blocks = outside_blocks[np.nonzero(np.all(outside_blocks - chunk_as_block_center
+					- np.round(outside_blocks - chunk_as_block_center) == 0,axis=1))[0]]
+				for block in (aligned_blocks - chunk_as_block_center):
+					translated_seed = (chunk_axes_inv_seed + block).dot(self.squarallel)
+					if (np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) >= constraint[:,0] )
+									and np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) <= constraint[:,1])):
+						print("Some corner inside this: template#"+str(i)+", offset "+str(block))
+						outside_hits.append((i, block))
+						block_offsets = aligned_blocks - chunk_as_block_center
+						translated_seeds = (chunk_axes_inv_seed + block_offsets).dot(self.normallel.T)
+						a_hit = np.all([np.all(self.twoface_normals.dot( translated_seeds.T ).T >= constraint[:,0],axis=1),
+								np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=1)],axis=0)
+						print(a_hit)
+						print(translated_seed.dot(self.normallel.T) - translated_seeds)
+						print(block - block_offsets)
+						print(np.all(self.twoface_normals.dot( translated_seeds.T ).T >= constraint[:,0],axis=0))
+						print(self.twoface_normals.dot( translated_seeds.T ).T - constraint[:,0])
+						print(np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=0))
+						print(self.twoface_normals.dot( translated_seeds.T ).T - constraint[:,1])
+		hits = inside_hits + outside_hits
 		print("Found "+str(len(hits))+" possible superchunks.")
 		print(time.perf_counter()-starttime)
 		

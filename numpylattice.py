@@ -246,6 +246,10 @@ class numpylattice(MeshInstance):
 		print("Found "+str(len(blocks))+" blocks in the lattice")
 		multiplier = 4
 		
+		# TODO Ending up with overlap between inside_blocks and neighbor_blocks,
+		# which was supposed to have been ruled out by using block_center_in_chunk
+		# and 1 - block_center_in_chunk. Could there be duplicate blocks in our
+		# "blocks" list?? How would one copy end up inside, the other outside?
 		neighbor_blocks = []
 		inside_blocks = []
 		axes_matrix = np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
