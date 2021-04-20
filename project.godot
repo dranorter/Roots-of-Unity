@@ -24,7 +24,7 @@ debugging="*res://debugging.py"
 
 [editor_plugins]
 
-enabled=PoolStringArray( "res://addons/pythonscript_repl/plugin.cfg" )
+enabled=PoolStringArray( "res://addons/CSGExport/plugin.cfg", "res://addons/pythonscript_repl/plugin.cfg" )
 
 [gdnative]
 

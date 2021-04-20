@@ -748,7 +748,7 @@ class numpylattice(MeshInstance):
 
 		self.mesh.surface_set_material(0,COLOR)
 		print("Drawing inner blocks. "+str(time.perf_counter()-starttime))
-		st.begin(Mesh.PRIMITIVE_LINES)
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
 		st.add_color(Color(0,1,1))
 		for block in blocks:
 			if np.all(np.abs((np.array(block).dot(worldplane.T)*multiplier - (chosen_center)
@@ -765,28 +765,52 @@ class numpylattice(MeshInstance):
 				# Draw by recombining
 				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2]))
 				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir1)
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir1+dir2)
+				
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2]))
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir1+dir2)
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir2)
+				
 				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2]))
 				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir2)
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir2+dir3)
+				
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2]))
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir2+dir3)
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir3)
+				
 				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2]))
 				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir3)
-				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2]))
-				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir1)
-				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2]))
-				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir2)
-				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2]))
-				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir3)
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir3+dir1)
+				
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2]))
+				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir3+dir1)
 				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir1)
-				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir2)
-				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir2)
-				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir3)
-				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir3)
+				
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2]))
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir1-dir2)
 				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir1)
-				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir1)
-				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir3)
-				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir2)
-				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir1)
-				st.add_vertex(Vector3(face_origin[0],face_origin[1],face_origin[2])+dir3)
+				
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2]))
 				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir2)
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir1-dir2)
+				
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2]))
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir2-dir3)
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir2)
+				
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2]))
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir3)
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir2-dir3)
+				
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2]))
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir3-dir1)
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir3)
+				
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2]))
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir1)
+				st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir3-dir1)
+				
 		st.commit(self.mesh)
 		self.mesh.surface_set_material(1,COLOR)
 		
