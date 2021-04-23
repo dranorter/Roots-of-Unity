@@ -30,6 +30,11 @@ enabled=PoolStringArray( "res://addons/CSGExport/plugin.cfg", "res://addons/pyth
 
 singletons=[ "res://pythonscript.gdnlib" ]
 
+[global]
+
+blend=false
+
 [rendering]
 
+limits/buffers/blend_shape_max_buffer_size_kb=8192
 environment/default_environment="res://default_env.tres"
