@@ -10,7 +10,7 @@ import numbers
 
 COLOR = ResourceLoader.load("res://new_spatialmaterial.tres")
 
-@exposed(tool=True)
+@exposed(tool=False)
 class numpylattice(MeshInstance):
 	
 	def chunk_test(self, a = None, chosen_center = None, constraints = None):
