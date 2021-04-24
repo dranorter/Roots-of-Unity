@@ -351,260 +351,129 @@ class Chunk(MeshInstance):
 		st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir1)
 		st.add_vertex(Vector3(face_tip[0],face_tip[1],face_tip[2])-dir3-dir1)
 	
-	def _ready(self):
-		starttime = time.perf_counter()
-		
-		#self.convert_chunklayouts()
-		
-		print("Loading from existing file...")
+	def load_templates_npy(self):
 		fs = File()
-		
-		constraints_sorted = dict()
-		for center in self.possible_centers:
-			constraints_sorted[center] = []
-		
-		all_constraints = []
-		all_blocks = []
-		all_chunks = []
-		all_counters = []
-		all_chosen_centers = []
-		all_block_axes = []
-		all_sorted_constraints = []
-		blocklist = []
-		
-		
-		print(time.perf_counter()-starttime)
-		print("Loading...")
-#		print(time.perf_counter()-starttime)
-#		fs.open("res://chunk_layouts.repr",fs.READ)
-#		all_constraints = eval(str(fs.get_line()))
-#		print("Loaded part 1")
-#		print(time.perf_counter()-starttime)
-#		constraints_sorted = eval(str(fs.get_line()))
-#		print("Loaded part 2")
-#		print(time.perf_counter()-starttime)
-#		all_blocks = eval(str(fs.get_line()))
-#		print("Loaded part 3")
-#		print(time.perf_counter()-starttime)
-#		all_chosen_centers = eval(str(fs.get_line()))
-#		print("Loaded part 4")
-#		print(time.perf_counter()-starttime)
-#		fs.close()
-		
 		fs.open("res://temp_test",fs.READ)
-		all_constraints = eval(str(fs.get_line()))
-		all_chosen_centers = eval(str(fs.get_line()))
-		blocklist = np.array(eval(str(fs.get_line())))
+		self.all_constraints = eval(str(fs.get_line()))
+		self.all_chosen_centers = eval(str(fs.get_line()))
+		self.blocklist = np.array(eval(str(fs.get_line())))
 		fs.close()
 		inside_blocks_bools = np.load("temp_test_is.npy")
 		outside_blocks_bools = np.load("temp_test_os.npy")
 		for i in range(inside_blocks_bools.shape[0]):
-			all_blocks.append((blocklist[inside_blocks_bools[i]],blocklist[outside_blocks_bools[i]]))
-		print("Done loading "+str(len(all_constraints))+" templates")
+			self.all_blocks.append((self.blocklist[inside_blocks_bools[i]],self.blocklist[outside_blocks_bools[i]]))
+	
+	def load_templates_repr(self):
+		fs = File()
+		fs.open("res://chunk_layouts.repr",fs.READ)
+		self.all_constraints = eval(str(fs.get_line()))
+		print("Loaded part 1")
 		print(time.perf_counter()-starttime)
-		
-		# Interesting note: Though all constraints are unique, they consist
-		# of a very limited set, of just 11 numbers (6 after absolute value).
-		# Well, with no rounding, it's 633 numbers...
-		# Despite this, all but 100 of the 4980 constraints can be distinguished 
-		# by which numbers are present, together with sign. (All can be 
-		# distinguished if we leave out the rounding.)
-		
-#		constraint_numsets = []
-#		numset_counts = []
-#		numset_members = []
-#		numset_ids = []
-#		numset_offsets = []
-#		constraint_numbers = set()
-#		for i in range(len(all_constraints)):
-#			match = False
-#			center = self.possible_centers_live[self.possible_centers.index(all_chosen_centers[i])]
-#			center_axes = 1-np.array(center - np.floor(center))*2
-#			center_origin = center - np.array(self.deflation_face_axes).T.dot(center_axes)/2
-#			center_axis1 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][0]])
-#			center_axis2 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][1]])
-#			center_axis3 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][2]])
-#			chunk_corners = np.array([center_origin,
-#				center_origin+center_axis1,center_origin+center_axis2,center_origin+center_axis3,
-#				center_origin+center_axis1+center_axis2,center_origin+center_axis1+center_axis3,center_origin+center_axis2+center_axis3,
-#				center_origin+center_axis1+center_axis2+center_axis3])
-#			# We consider all translations, since different chunks have the origin
-#			# at different corners.
-#			for corner in chunk_corners:
-#				shift = (-corner).dot(self.normallel.T)
-#				shifted_constraints = all_constraints[i] + np.repeat(shift.dot(self.twoface_normals.T).reshape(15,1),2,axis=1)
-#				#str_c = [str(pair) for pair in np.array(all_constraints[i])]
-#				str_c = np.abs(np.round(shifted_constraints,13)).flatten().tolist()
-#				for num in str_c: constraint_numbers.add(num)
-#				str_c.sort()
-#				str_c = str(str_c)
-#				if str_c not in set(constraint_numsets):
-#					constraint_numsets.append(str_c)
-#					numset_counts.append(1)
-#					numset_members.append([i])
-#					numset_offsets.append([corner])
-#					match = True
-#				else:
-#					numset_counts[constraint_numsets.index(str_c)] += 1
-#					numset_members[constraint_numsets.index(str_c)].append(i)
-#					numset_offsets[constraint_numsets.index(str_c)].append(corner)
-#					numset_ids.append(i)
-#					#print("Match with "+str(all_constraints[i]))
-#		print(str(len(constraint_numbers))+" constraint numbers.")
-#		print(str(len(constraint_numsets))+" constraint numsets.")
-#		print(str(len([x for x in numset_counts if x == 1]))+" lonely chunks.")
-#
-#		first_sixer = numset_counts.index(18)
-#
-#		for i in numset_members[first_sixer]:
-#			translation = numset_offsets[first_sixer][numset_members[first_sixer].index(i)]
-#			shift = (-translation).dot(self.normallel.T)
-#			shifted_constraints = all_constraints[i] + np.repeat(shift.dot(self.twoface_normals.T).reshape(15,1),2,axis=1)
-#			print(np.round(shifted_constraints,5))
-#			# Waste time so we can print
-#			#for j in range(5000000):
-#			#	_ = i + j
-#			#	_ = _ * _ * _ * _
-#			print(self.possible_centers_live[self.possible_centers.index(all_chosen_centers[i])] - translation)
-#			print("(originally "+all_chosen_centers[i]+")")
-#			print(translation)
-#			print(i)
-#
-#		numset_counts.sort()
-#		print(numset_counts)
-
-#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -2.0816681711721685e-16], [0.1419951170682907, 0.22975291311740875], [1.9081958235744878e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [3.469446951953614e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [2.498001805406602e-16, 0.1419951170682907], [-0.1419951170682907, -3.400058012914542e-16], [1.8041124150158794e-16, 0.1419951170682907]]
-#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [3.7470027081099033e-16, 0.08775780349969864], [0.1419951170682907, 0.22975291311740875], [-0.08775780349969864, -3.677613769070831e-16], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -3.3306690738754696e-16], [0.08775780349969864, 0.1419951170682907], [3.608224830031759e-16, 0.1419951170682907], [-0.1419951170682907, -3.3306690738754696e-16], [1.3877787807814457e-16, 0.1419951170682907]]
-#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [2.7755575615628914e-16, 0.08775780349969864], [0.1419951170682907, 0.22975291311740875], [1.6653345369377348e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -1.249000902703301e-16], [0.08775780349969864, 0.1419951170682907], [2.0816681711721685e-16, 0.1419951170682907], [-0.1419951170682907, -4.2327252813834093e-16], [4.0245584642661925e-16, 0.1419951170682907]]
-#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -3.469446951953614e-16], [0.1419951170682907, 0.22975291311740875], [-0.08775780349969864, -1.942890293094024e-16], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [2.3592239273284576e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [3.0531133177191805e-16, 0.1419951170682907], [-0.1419951170682907, -3.885780586188048e-16], [2.498001805406602e-16, 0.1419951170682907]]
-#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [2.498001805406602e-16, 0.08775780349969864], [0.1419951170682907, 0.22975291311740875], [-0.08775780349969864, -2.983724378680108e-16], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [4.996003610813204e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [3.95516952522712e-16, 0.1419951170682907], [-0.1419951170682907, -2.7755575615628914e-16], [3.469446951953614e-16, 0.1419951170682907]]
-#[[0.1419951170682907, 0.22975291311740875], [-0.22975291311740875, -0.1419951170682907], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -1.8041124150158794e-16], [0.1419951170682907, 0.22975291311740875], [2.220446049250313e-16, 0.08775780349969864], [0.08775780349969864, 0.1419951170682907], [-0.1419951170682907, -0.08775780349969864], [-0.1419951170682907, -0.08775780349969864], [-0.08775780349969864, -3.608224830031759e-16], [0.08775780349969864, 0.1419951170682907], [3.191891195797325e-16, 0.1419951170682907], [-0.1419951170682907, -4.0245584642661925e-16], [3.400058012914542e-16, 0.1419951170682907]]
-		
-#		ordered_str = [[str(pair) for pair in np.round(np.array(all_constraints[u]))] for u in numset_ids]
-#		for i in range(len(all_constraints)):
-#
-#			permutation = [ordered_str.index(x) for x in [str(pair) for pair in np.array(all_constraints[i])]]
-#			print(permutation)
-		
-		# TODO Need to experiment more with faster loading methods for these.
-		
-#		possible_blocks = set()
-#		for blocklayout in all_blocks:
-#			combined = np.concatenate([blocklayout[0],blocklayout[1]])
-#			combined = combined * 2
-#			combined = np.array(np.round(combined),dtype=np.int64)
-#			combined = [repr(list(x)) for x in combined]
-#			for block in combined:
-#				possible_blocks.add(block)
-#		print("Set up possible blocks list. "+str(len(possible_blocks))+" occur.")#4042
-#		print(time.perf_counter()-starttime)
-#
-#		possible_layouts = []
-#		blocklist = [eval(x) for x in possible_blocks]
-#		for blocklayout in all_blocks:
-#			combined = np.concatenate([blocklayout[0],blocklayout[1]])
-#			combined = np.round(combined * 2)
-#			layout = np.any(np.all(np.repeat(blocklist,len(combined),axis=0).reshape(-1,len(combined),6) - combined == 0,axis=2),axis=1)
-#			novel = True
-#			for poss in possible_layouts:
-#				if np.all(layout == poss):
-#					novel = False
-#					debugging.breakpoint()
-#			if novel:
-#				possible_layouts.append(layout)
-#		print("Number of unique layouts according to more careful calculation:")
-#		print(len(possible_layouts))
-#		print(time.perf_counter()-starttime)
-		
-		# Choose one chunk to display
-		chunk_num = r.choice(range(len(all_blocks)))
-		chosen_center = self.possible_centers_live[self.possible_centers.index(all_chosen_centers[chunk_num])]
-		inside_blocks = all_blocks[chunk_num][0]
-		outside_blocks = all_blocks[chunk_num][1]
-		
-		print("Chosen center: "+str(chosen_center))
-		
-		multiplier = 1
-		array_mesh = ArrayMesh()
-		self.mesh = array_mesh
-		
-#		st = SurfaceTool()
-#		print("Drawing neighbor blocks next.")
-#		st.begin(Mesh.PRIMITIVE_LINES)
-#		st.add_color(Color(0,.5,0))
-#		for block in outside_blocks:
-#			self.draw_block(block,st,multiplier)
-#		st.commit(self.mesh)
-#
-#		self.mesh.surface_set_material(0,COLOR)
-#		print("Drawing inner blocks. ")
-#		st.begin(Mesh.PRIMITIVE_LINES)
-#		st.add_color(Color(0,1,1))
-#		for block in inside_blocks:
-#			self.draw_block(block,st,multiplier)
-#		st.commit(self.mesh)
-#		self.mesh.surface_set_material(1,COLOR)
-		
-		
-		# Now try to find a super-chunk for this chunk
-		
-		# First we have to find an offset value within the chunk constraints.
-		# I'll call this the "seed" since it will determine the entire lattice.
-		
-		# Starting value, will get moved to inside the chosen chunk orientation constraints.
-		seed = np.array([-r.random()*0.1,-r.random()*0.1,-r.random()*0.1,-r.random()*0.1,-r.random()*0.1,-r.random()*0.1])
-		seed = seed.dot(self.squarallel)
-		
-		center_guarantee = dict()
-		for center in self.possible_centers_live:
-			center_axes = 1-np.array(center - np.floor(center))*2
-			center_origin = center - np.array(self.deflation_face_axes).T.dot(center_axes)/2
-			center_axis1 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][0]])
-			center_axis2 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][1]])
-			center_axis3 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][2]])
-			chunk_corners = np.array([center_origin,
-				center_origin+center_axis1,center_origin+center_axis2,center_origin+center_axis3,
-				center_origin+center_axis1+center_axis2,center_origin+center_axis1+center_axis3,center_origin+center_axis2+center_axis3,
-				center_origin+center_axis1+center_axis2+center_axis3])
-			a = np.sum(chunk_corners,axis=0)/8
-			center_constraints = np.sum(np.stack(np.repeat([chunk_corners - a],30,axis=0),axis=1).dot(self.normallel.T)
-					* np.concatenate(np.array([self.twoface_normals,-self.twoface_normals]).reshape((1,30,3))),axis=2)
-			overall_center_constraints = 0.9732489894677302/(self.phi*self.phi*self.phi) - np.max(center_constraints,axis=0)
-			translated_constraints = (overall_center_constraints*np.concatenate([-np.ones(15),np.ones(15)]) 
-					+ np.concatenate([self.twoface_normals,self.twoface_normals]).dot(a.dot(self.normallel.T)))
-			translated_constraints = (translated_constraints).reshape((2,15)).T
-			center_guarantee[str(center)] = translated_constraints
-		
-		ch3_member = np.ceil(chosen_center)-np.floor(chosen_center)
-		three_axes = np.nonzero(ch3_member)[0]
-		constraint_dims = np.nonzero(1-np.any(self.twoface_axes - ch3_member > 0,axis=1))[0]
-		# constraint_dims gives us indices into center_guarantee as well as twoface_axes,
-		# twoface_normals and twoface_projected.
-		for i in constraint_dims:
-			third_axis = np.nonzero(ch3_member - self.twoface_axes[i])[0][0]
-			axis_scale = np.eye(6)[third_axis].dot(self.normallel.T).dot(self.twoface_normals[i])
-			divergence = center_guarantee[str(chosen_center)][i] - self.twoface_normals[i].dot(seed.dot(self.normallel.T))
-			# Is point outside the constraints in this direction?
-			if divergence[0]*divergence[1] >= 0:
-				rand_pos = r.random()
-				move = (divergence[0]*rand_pos + divergence[1]*(1-rand_pos))*np.eye(6)[third_axis].dot(self.normallel.T)/axis_scale
-				seed = seed + move.dot(self.normallel)
-				
-				generates_correct_chunk = (np.all(self.twoface_normals.dot(seed.dot(self.normallel.T)) 
-							> center_guarantee[str(chosen_center)][:,0] )
-						and np.all(self.twoface_normals.dot(seed.dot(self.normallel.T)) < center_guarantee[str(chosen_center)][:,1]))
-				if generates_correct_chunk:
-					# Break early before we mess it up
+		self.constraints_sorted = eval(str(fs.get_line()))
+		print("Loaded part 2")
+		print(time.perf_counter()-starttime)
+		self.all_blocks = eval(str(fs.get_line()))
+		print("Loaded part 3")
+		print(time.perf_counter()-starttime)
+		self.all_chosen_centers = eval(str(fs.get_line()))
+		print("Loaded part 4")
+		print(time.perf_counter()-starttime)
+		fs.close()
+	
+	def make_seed_within_constraints(self,constraints):
+		upper_limit = 10000
+		counter = 0
+		while counter < upper_limit and not self.satisfies(self.seed,constraints,strict = True):
+			counter += 1
+			axes = list(range(15))
+			r.shuffle(axes)
+			for axis in axes:
+				proj_seed = self.seed.dot(self.normallel.T).dot(self.twoface_normals[axis])
+				if proj_seed <= np.array(constraints)[axis,0] or proj_seed >= np.array(constraints)[axis,1]:
+					self.seed -= proj_seed*self.twoface_normals[axis].dot(self.normallel)
+					new_dist = r.random()
+					self.seed += ((1-new_dist)*np.array(constraints)[axis,0]*self.twoface_normals[axis].dot(self.normallel)
+								+ new_dist*np.array(constraints)[axis,1]*self.twoface_normals[axis].dot(self.normallel))
+				if self.satisfies(self.seed,constraints,strict=True):
+					# Stop before we ruin it
 					break
+		if counter >= upper_limit:
+			raise Exception("Exceeded allowed tries while trying to satisfy constraints "+str(constraints))
 		
-		# Now that "seed" is a valid offset for our chosen chunk, we need to 
-		# determine which superchunk it can fit in.
-		# There should logically be just one option, since the seed uniquely
-		# determines the whole grid. We want to choose the chunk whose voxels
-		# could all have fit into the original grid *as chunks* - meaning we
-		# want to choose the chunk whose points are all within the tighter 
-		# chunk-level constraints, IE, constraints nearer to the world-plane
-		# by phi^3.
+	def satisfies(self,vector,constraints,strict=False):
+		"""
+		Returns True if the vector (array or ndarray, 3D or 6D)	falls inside the 
+		constraints. A 6D vector is first projected into the 3D 'parallel space'.
+		Constraints should be of shape (15,2), representing first a lower and then
+		an upper bound in the 15 directions perpendicular to the faces of a 
+		triacontahedron, in the ordering represented by self.twoface_normals.
+		If strict is set False, the vector may lie on the boundary; otherwise,
+		vectors on the boundary result in a return value of False.
+		"""
+		threevector = np.zeros(3)
+		if vector.shape[-1] == 6:
+			threevector = vector.dot(self.normallel.T)
+		if vector.shape[-1] == 3:
+			threevector = vector
+		if strict:
+			return (np.all(self.twoface_normals.dot(threevector) 
+						> np.array(constraints)[:,0] )
+				and np.all(self.twoface_normals.dot(threevector)
+						< np.array(constraints)[:,1]))
+		return (np.all(self.twoface_normals.dot(threevector)
+						>= np.array(constraints)[:,0] )
+				and np.all(self.twoface_normals.dot(threevector)
+						<= np.array(constraints)[:,1]))
+	
+	def satisfies_by(self,vector,constraints):
+		"""
+		Returns the margin by which the vector (array or ndarray, 3D or 6D)
+		falls inside the constraints. A 6D vector is first projected into the 3D 
+		'parallel space'. If vector is within the constraints, return value is 
+		positive, and represents the distance the vector would have to be moved 
+		to exit the constaints. If vector is outside the constraints, the 
+		return value is negative, and represents the distance the vector would
+		have to be moved to satisfy whicever constraint it is furthest from
+		satisfying. This can be somewhat smaller than the distance it would
+		need to move to actually satisfy the constraint.
+		Constraints should be of shape (15,2), representing first a lower and then
+		an upper bound in the 15 directions perpendicular to the faces of a 
+		triacontahedron, in the ordering represented by self.twoface_normals.
+		"""
+		threevector = np.zeros(3)
+		if vector.shape[-1] == 6:
+			threevector = vector.dot(self.normallel.T)
+		if vector.shape[-1] == 3:
+			threevector = vector
+		return min(np.min(self.twoface_normals.dot(threevector) - np.array(constraints)[:,0]),
+					np.min(-self.twoface_normals.dot(threevector) + np.array(constraints)[:,1]))
+	
+	def generate_parents(self,template_index,offset):
+		"""
+		Takes a chunk template (as an index into self.all_blocks etc) and the
+		offset at which the chunk's relative origin sits, and returns at least
+		one valid superchunk for that chunk given the current seed. Return
+		value is a list of tuples (index, offset) indicating each superchunk's
+		template along with where its own origin will belong. Note, the returned
+		offsets are scaled as if the child chunk were a single block, and 
+		should be scaled up in order to be drawn etc.
+		TODO: This should take a 'level' argument or require an appropriately 
+		scaled 'seed' so that it can be used to generate other levels of the
+		hierarchy.
+		"""
+		if np.linalg.norm(offset) > 0:
+			raise NotImplementedError("Nonzero offset not implemented yet.")
+		
+		chosen_center = self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[template_index])]
+		ch3_member = np.ceil(chosen_center)-np.floor(chosen_center)
+		
+		# (Keeping all the rambly figuring-things-out comments for now)
+		
+		# We want to choose the chunk whose voxels could all have fit into the
+		# original grid *as chunks* - meaning we want to choose the chunk whose
+		# points are all within the tighter chunk-level constraints, IE,
+		# constraints nearer to the world-plane by phi^3.
+		#
 		# Does that mean we could just divide the constraints by phi^3? Well,
 		# what the constraints accompanying a chunk mean is that if the seed
 		# falls between those constraint values, then all the points listed will
@@ -630,7 +499,7 @@ class Chunk(MeshInstance):
 		
 		chunk_axes = np.array(self.deflation_face_axes)[np.array(np.nonzero(1-ch3_member)[0])]
 		reproportioned_center = chosen_center.dot(self.squareworld)+math.pow(self.phi,6)*chosen_center.dot(self.squarallel)
-		reproportioned_seed = seed*math.pow(self.phi,6)
+		reproportioned_seed = self.seed*math.pow(self.phi,6)
 		print("Reproportioned center: "+str(reproportioned_center))
 		rescaled_center = reproportioned_center/(self.phi*self.phi*self.phi)#(2*reproportioned_center.dot(chunk_axes[0]))
 		rescaled_seed = reproportioned_seed/(self.phi*self.phi*self.phi)#(2*reproportioned_center.dot(chunk_axes[0]))
@@ -638,10 +507,9 @@ class Chunk(MeshInstance):
 		
 		chunk_axes_inv = np.linalg.inv(np.array(self.deflation_face_axes).T)
 		#chunk_axes_inv = np.linalg.inv(np.array(self.deflation_face_axes))
-		chunk_axes_inv_seed = chunk_axes_inv.dot(seed)
+		chunk_axes_inv_seed = chunk_axes_inv.dot(self.seed)
 		print("Using chunk inverse: "+str(chunk_axes_inv.dot(chosen_center)))
 		print("Rescaled seed: "+str(chunk_axes_inv_seed))
-		print("Rescaled seed, made perpendicular: "+str(chunk_axes_inv_seed.dot(self.squarallel)))
 		
 		# Does this seed fall within our constraint region?
 		# Seeds are equivalent under integer addition and subtration, but
@@ -670,8 +538,10 @@ class Chunk(MeshInstance):
 		# The "rescaling" transformation above, combined with all the translations
 		# of the seed occurring in the search below, check the seed absolutely
 		# for presence of the specific blocks in the templates. 
-		print(str(np.any([np.all(self.twoface_normals.dot(chunk_axes_inv_seed.dot(self.normallel.T)) >= center_guarantee[chunk][:,0] )
-					and np.all(self.twoface_normals.dot(chunk_axes_inv_seed.dot(self.normallel.T)) <= center_guarantee[chunk][:,1])
+		print(str(np.any([np.all(self.twoface_normals.dot(chunk_axes_inv_seed.dot(self.normallel.T)) 
+								>= self.center_guarantee[chunk][:,0] )
+					and np.all(self.twoface_normals.dot(chunk_axes_inv_seed.dot(self.normallel.T)) 
+								<= self.center_guarantee[chunk][:,1])
 					for chunk in self.possible_centers])))
 		
 		# With the chunk and seed mapped down to block size, we can picture the old blocks present
@@ -725,44 +595,62 @@ class Chunk(MeshInstance):
 		closest_non_hit = None
 		inside_hits = []
 		outside_hits = []
-		for i in range(len(all_blocks)):
-			#TODO: Load all parent chunks?
-			inside_blocks = np.array(all_blocks[i][0])
-			constraint = np.array(all_constraints[i])
-			# Blocks with orientation matching our chosen chunk
+		for i in range(len(self.all_blocks)):
+			inside_blocks = np.array(self.all_blocks[i][0])
+			constraint = np.array(self.all_constraints[i])
 			aligned_blocks = inside_blocks[np.nonzero(np.all(inside_blocks - chunk_as_block_center
 				- np.round(inside_blocks - chunk_as_block_center) == 0,axis=1))[0]]
-			for block in (aligned_blocks - chunk_as_block_center):
-				# Calculate translated seed
-				translated_seed = (chunk_axes_inv_seed + block).dot(self.squarallel)
-				#translated_seed = (chunk_axes_inv_seed - block).dot(self.squarallel)
-				# Does it fall in the constraints?
-				# TODO This doesn't seem to work (compared with the explicit <= and >=) but I don't see why.
-				positive_means_yes = min(np.min(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) - constraint[:,0]),
-										np.min(-self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) + constraint[:,1]))
-				# (initialize closest_non_hit)
-				if closest_non_hit is None:
-					closest_non_hit = (i, block, positive_means_yes)
-				if (np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) >= constraint[:,0] )
-								and np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) <= constraint[:,1])):
-				#if positive_means_yes >= 0:
-					print("Actually inside this: template#"+str(i)+", offset "+str(block))
-					inside_hits.append((i, block))
-					if positive_means_yes < 0:
-						print("positive_means_yes evaluated to "+str(positive_means_yes)+" (rather than being >= 0)")
-				else:
-					if positive_means_yes >= 0:
-						print("positive_means_yes evaluated to "+str(positive_means_yes)+" (rather than being < 0)")
-					# Is it the closest non-hit so far?
-					if positive_means_yes > closest_non_hit[2]:
-						closest_non_hit = (i, block, positive_means_yes)
+			if len(list(aligned_blocks)) == 0:
+				continue
+			block_offsets = aligned_blocks - chunk_as_block_center
+			translated_seeds = (chunk_axes_inv_seed + block_offsets).dot(self.normallel.T)
+			#translated_seeds = (chunk_axes_inv_seed - block_offsets).dot(self.normallel.T)
+			a_hit = np.all([np.all(self.twoface_normals.dot( translated_seeds.T ).T >= constraint[:,0],axis=1),
+					np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=1)],axis=0)
+			if np.any(a_hit):
+				print("We're inside template #"+str(i)+", at offset"+str(block_offsets[np.array(np.nonzero(a_hit))[0,0]]))
+				inside_hits = [(i,block_offsets[j]) for j in np.nonzero(a_hit)[0]]
+				break
+#		if len(inside_hits) == 0:
+#			print("Trying for-loop search")
+#			for i in range(len(self.all_blocks)):
+#				#TODO: Load all parent chunks?
+#				inside_blocks = np.array(self.all_blocks[i][0])
+#				constraint = np.array(self.all_constraints[i])
+#				# Blocks with orientation matching our chosen chunk
+#				aligned_blocks = inside_blocks[np.nonzero(np.all(inside_blocks - chunk_as_block_center
+#					- np.round(inside_blocks - chunk_as_block_center) == 0,axis=1))[0]]
+#				for block in (aligned_blocks - chunk_as_block_center):
+#					# Calculate translated seed
+#					translated_seed = (chunk_axes_inv_seed + block).dot(self.squarallel)
+#					#translated_seed = (chunk_axes_inv_seed - block).dot(self.squarallel)
+#					# Does it fall in the constraints?
+#					# TODO This doesn't seem to work (compared with the explicit <= and >=) but I don't see why.
+#					positive_means_yes = min(np.min(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) - constraint[:,0]),
+#											np.min(-self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) + constraint[:,1]))
+#					# (initialize closest_non_hit)
+#					if closest_non_hit is None:
+#						closest_non_hit = (i, block, positive_means_yes)
+#					if (np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) >= constraint[:,0] )
+#									and np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) <= constraint[:,1])):
+#					#if positive_means_yes >= 0:
+#						print("Actually inside this: template#"+str(i)+", offset "+str(block))
+#						inside_hits.append((i, block))
+#						if positive_means_yes < 0:
+#							print("positive_means_yes evaluated to "+str(positive_means_yes)+" (rather than being >= 0)")
+#					else:
+#						if positive_means_yes >= 0:
+#							print("positive_means_yes evaluated to "+str(positive_means_yes)+" (rather than being < 0)")
+#						# Is it the closest non-hit so far?
+#						if positive_means_yes > closest_non_hit[2]:
+#							closest_non_hit = (i, block, positive_means_yes)
 		# Checking outside blocks takes a lot longer, we only want to  do it if we need to
 		# TODO This faster numpy version doesn't seem to agree with the slower code - what's 
 		# the difference?
 		if len(inside_hits) == 0:
-			for i in range(len(all_blocks)):
-				outside_blocks = np.array(all_blocks[i][1])
-				constraint = np.array(all_constraints[i])
+			for i in range(len(self.all_blocks)):
+				outside_blocks = np.array(self.all_blocks[i][1])
+				constraint = np.array(self.all_constraints[i])
 				aligned_blocks = outside_blocks[np.nonzero(np.all(outside_blocks - chunk_as_block_center
 					- np.round(outside_blocks - chunk_as_block_center) == 0,axis=1))[0]]
 				if len(list(aligned_blocks)) == 0:
@@ -775,48 +663,217 @@ class Chunk(MeshInstance):
 						np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=1)],axis=0)
 				if np.any(a_hit):
 					print("Some sort of neighbor block hit! ")
-					outside_hits = [(i,block_offsets[i]) for i in np.nonzero(a_hit)[0]]
+					outside_hits = [(i,block_offsets[j]) for i in np.nonzero(a_hit)[0]]
 					break
-		if len(inside_hits) == 0 and len(outside_hits) == 0:
-			# The slow way
-			print("Trying exhaustive search")
-			for i in range(len(all_blocks)):
-				outside_blocks = np.array(all_blocks[i][1])
-				constraint = np.array(all_constraints[i])
-				aligned_blocks = outside_blocks[np.nonzero(np.all(outside_blocks - chunk_as_block_center
-					- np.round(outside_blocks - chunk_as_block_center) == 0,axis=1))[0]]
-				for block in (aligned_blocks - chunk_as_block_center):
-					translated_seed = (chunk_axes_inv_seed + block).dot(self.squarallel)
-					#translated_seed = (chunk_axes_inv_seed - block).dot(self.squarallel)
-					positive_means_yes = min(np.min(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) - constraint[:,0]),
-											np.min(-self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) + constraint[:,1]))
-					if (np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) >= constraint[:,0] )
-									and np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) <= constraint[:,1])):
-					#if positive_means_yes >= 0:
-						print("Some corner inside this: template#"+str(i)+", offset "+str(block))
-						outside_hits.append((i, block))
-						block_offsets = aligned_blocks - chunk_as_block_center
-						translated_seeds = (chunk_axes_inv_seed + block_offsets).dot(self.normallel.T)
-						a_hit = np.all([np.all(self.twoface_normals.dot( translated_seeds.T ).T >= constraint[:,0],axis=1),
-								np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=1)],axis=0)
-						print(a_hit)
-						print(translated_seed.dot(self.normallel.T) - translated_seeds)
-						print(block - block_offsets)
-						print(np.all(self.twoface_normals.dot( translated_seeds.T ).T >= constraint[:,0],axis=0))
-						print(self.twoface_normals.dot( translated_seeds.T ).T - constraint[:,0])
-						print(np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=0))
-						print(self.twoface_normals.dot( translated_seeds.T ).T - constraint[:,1])
-					else:
-						# Is it the closest non-hit so far?
-						if positive_means_yes > closest_non_hit[2]:
-							closest_non_hit = (i, block, positive_means_yes)
+#		if len(inside_hits) == 0 and len(outside_hits) == 0:
+#			# The slow way
+#			print("Trying exhaustive search")
+#			for i in range(len(self.all_blocks)):
+#				outside_blocks = np.array(self.all_blocks[i][1])
+#				constraint = np.array(self.all_constraints[i])
+#				aligned_blocks = outside_blocks[np.nonzero(np.all(outside_blocks - chunk_as_block_center
+#					- np.round(outside_blocks - chunk_as_block_center) == 0,axis=1))[0]]
+#				for block in (aligned_blocks - chunk_as_block_center):
+#					translated_seed = (chunk_axes_inv_seed + block).dot(self.squarallel)
+#					#translated_seed = (chunk_axes_inv_seed - block).dot(self.squarallel)
+#					positive_means_yes = min(np.min(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) - constraint[:,0]),
+#											np.min(-self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) + constraint[:,1]))
+#					if (np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) >= constraint[:,0] )
+#									and np.all(self.twoface_normals.dot(translated_seed.dot(self.normallel.T)) <= constraint[:,1])):
+#					#if positive_means_yes >= 0:
+#						print("Some corner inside this: template#"+str(i)+", offset "+str(block))
+#						outside_hits.append((i, block))
+#						block_offsets = aligned_blocks - chunk_as_block_center
+#						translated_seeds = (chunk_axes_inv_seed + block_offsets).dot(self.normallel.T)
+#						a_hit = np.all([np.all(self.twoface_normals.dot( translated_seeds.T ).T >= constraint[:,0],axis=1),
+#								np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=1)],axis=0)
+#						print(a_hit)
+#						print(translated_seed.dot(self.normallel.T) - translated_seeds)
+#						print(block - block_offsets)
+#						print(np.all(self.twoface_normals.dot( translated_seeds.T ).T >= constraint[:,0],axis=0))
+#						print(self.twoface_normals.dot( translated_seeds.T ).T - constraint[:,0])
+#						print(np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=0))
+#						print(self.twoface_normals.dot( translated_seeds.T ).T - constraint[:,1])
+#					else:
+#						# Is it the closest non-hit so far?
+#						if positive_means_yes > closest_non_hit[2]:
+#							closest_non_hit = (i, block, positive_means_yes)
 		hits = inside_hits + outside_hits
 		print("Found "+str(len(hits))+" possible superchunks.")
-		print(time.perf_counter()-starttime)
 		if len(hits) == 0:
 			print("(WARNING) Using closest non-hit, which misses the constraint by:")
 			print(closest_non_hit[2])
 			hits = [(closest_non_hit[0],closest_non_hit[1])]
+		
+		return hits
+	
+	def generate_children(self,i,offset):
+		"""
+		
+		"""
+		
+		chosen_center = self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[i])]
+		chunk_axes_inv = np.linalg.inv(np.array(self.deflation_face_axes).T)
+		chunk_as_block_center = np.round(chunk_axes_inv.dot(chosen_center)*2)/2.0
+		
+		multiplier = 1
+		for chunk in np.concatenate([np.array(self.all_blocks[i][0]) - offset, np.array(self.all_blocks[i][1]) - offset]):
+			if np.all(chunk == chunk_as_block_center):
+				print("Looking at the original chunk... "+str(chunk))
+			st = SurfaceTool()
+			st.begin(Mesh.PRIMITIVE_TRIANGLES)
+			st.add_color(Color(r.random(),r.random(),r.random()))
+			# We need to use "offset" plus the current chunk's coordinates to move "seed", 
+			# and combine that with the orientation of the current chunk to
+			# determine which block template to use. The "offset" is 
+			# represented as if chunks were block-sized though, and needs to
+			# be put through the transformation.
+			# The order in which this is done seems pretty influential for 
+			# amount of floating point error.
+			chunk_center_pos = chunk - np.floor(chunk)
+			chunkscaled_position = (np.array(self.deflation_face_axes).T).dot(np.floor(chunk))
+			#chunk_seed = (seed + chunkscaled_position)#.dot(self.squarallel)
+			chunk_seed = (self.seed - chunkscaled_position).dot(self.squarallel)
+#				if np.all(chunk == chunk_as_block_center):
+#					print("Scaled pos was "+str(np.round(chunkscaled_position,3)))
+#					print("Seed comparison:")
+#					print(self.seed)
+#					print(chunk_seed)
+#					print()
+			matches = 0
+			for template_index in range(len(self.all_blocks)):
+				# Check alignment
+				# TODO Checking alignment shouldn't be necessary - any 'extra'
+				# chunks found would still be rooted at the correct position and
+				# would still belong on the tesselation.
+				template_center = self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[template_index])]
+				if np.all((template_center + chunk) 
+						- np.round(template_center + chunk) != 0):
+					# Then check constraint
+					constraint = np.array(self.all_constraints[template_index])
+#					if np.all(chunk == chunk_as_block_center):
+#						if chunk_num == template_index:
+#							print("Found original template.")
+#						if (np.all(self.twoface_normals.dot(chunk_seed.dot(self.normallel.T)) >= constraint[:,0] )
+#									and np.all(self.twoface_normals.dot(chunk_seed.dot(self.normallel.T)) <= constraint[:,1])):
+					if self.satisfies(chunk_seed, constraint):
+						# Then draw! We'll expect a unique match but not check.
+						matches = matches + 1
+						for block in (np.concatenate([np.array(self.all_blocks[template_index][0]),
+									np.array(self.all_blocks[template_index][0])]) + chunkscaled_position):
+							if (block[1] == 0):#block.dot(self.normalworld.T).dot(self.normalworld.T[0]) < 5
+								#and block[0] == 0):
+								self.draw_block(block,st,multiplier)
+#						if chunk_num == template_index:
+#							print("And our seed satisfies the original constraints!")
+#					else:
+#						if np.all(chunk==chunk_as_block_center) and chunk_num == template_index:
+#							print("But seed isn't inside its constraints.")
+			if matches > 0:
+				st.generate_normals()
+				st.commit(self.mesh)
+				self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
+			if matches > 1:
+				print("More than one templates matched a chunk... found "+str(matches)+".")
+			if matches == 0:
+				print("No templates matched the chunk "+str(chunk))
+#					print("Scaled pos was "+str(np.round(chunkscaled_position,3)))
+	
+	def _ready(self):
+		starttime = time.perf_counter()
+		
+		#self.convert_chunklayouts()
+		
+		print("Loading from existing file...")
+		
+		self.all_constraints = []
+		self.all_blocks = []
+		self.blocklist = []
+		
+		print(time.perf_counter()-starttime)
+		print("Loading...")
+		
+		self.load_templates_npy()
+		print("Done loading "+str(len(self.all_constraints))+" templates")
+		print(time.perf_counter()-starttime)
+		
+		
+		# Choose one chunk to display
+		chunk_num = r.choice(range(len(self.all_blocks)))
+		chosen_center = self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[chunk_num])]
+		inside_blocks = self.all_blocks[chunk_num][0]
+		outside_blocks = self.all_blocks[chunk_num][1]
+		
+		print("Chosen center: "+str(chosen_center))
+		
+		array_mesh = ArrayMesh()
+		self.mesh = array_mesh
+		
+		
+		# Now try to find a super-chunk for this chunk
+		
+		# First we have to find an offset value within the chunk constraints.
+		# I'll call this the "seed" since it will determine the entire lattice.
+		
+		# Starting value, will get moved to inside the chosen chunk orientation constraints.
+		self.seed = np.array([-r.random()*0.1,-r.random()*0.1,-r.random()*0.1,-r.random()*0.1,-r.random()*0.1,-r.random()*0.1])
+		self.seed = self.seed.dot(self.squarallel)
+		
+		self.center_guarantee = dict()
+		for center in self.possible_centers_live:
+			center_axes = 1-np.array(center - np.floor(center))*2
+			center_origin = center - np.array(self.deflation_face_axes).T.dot(center_axes)/2
+			center_axis1 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][0]])
+			center_axis2 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][1]])
+			center_axis3 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][2]])
+			chunk_corners = np.array([center_origin,
+				center_origin+center_axis1,center_origin+center_axis2,center_origin+center_axis3,
+				center_origin+center_axis1+center_axis2,center_origin+center_axis1+center_axis3,center_origin+center_axis2+center_axis3,
+				center_origin+center_axis1+center_axis2+center_axis3])
+			a = np.sum(chunk_corners,axis=0)/8
+			center_constraints = np.sum(np.stack(np.repeat([chunk_corners - a],30,axis=0),axis=1).dot(self.normallel.T)
+					* np.concatenate(np.array([self.twoface_normals,-self.twoface_normals]).reshape((1,30,3))),axis=2)
+			overall_center_constraints = 0.9732489894677302/(self.phi*self.phi*self.phi) - np.max(center_constraints,axis=0)
+			translated_constraints = (overall_center_constraints*np.concatenate([-np.ones(15),np.ones(15)]) 
+					+ np.concatenate([self.twoface_normals,self.twoface_normals]).dot(a.dot(self.normallel.T)))
+			translated_constraints = (translated_constraints).reshape((2,15)).T
+			self.center_guarantee[str(center)] = translated_constraints
+		
+		ch3_member = np.ceil(chosen_center)-np.floor(chosen_center)
+		three_axes = np.nonzero(ch3_member)[0]
+		constraint_dims = np.nonzero(1-np.any(self.twoface_axes - ch3_member > 0,axis=1))[0]
+		# constraint_dims gives us indices into center_guarantee as well as twoface_axes,
+		# twoface_normals and twoface_projected.
+		for i in constraint_dims:
+			third_axis = np.nonzero(ch3_member - self.twoface_axes[i])[0][0]
+			axis_scale = np.eye(6)[third_axis].dot(self.normallel.T).dot(self.twoface_normals[i])
+			divergence = self.center_guarantee[str(chosen_center)][i] - self.twoface_normals[i].dot(self.seed.dot(self.normallel.T))
+			# Is point outside the constraints in this direction?
+			if divergence[0]*divergence[1] >= 0:
+				rand_pos = r.random()
+				move = (divergence[0]*rand_pos + divergence[1]*(1-rand_pos))*np.eye(6)[third_axis].dot(self.normallel.T)/axis_scale
+				self.seed = self.seed + move.dot(self.normallel)
+				
+				generates_correct_chunk = (np.all(self.twoface_normals.dot(self.seed.dot(self.normallel.T)) 
+							> self.center_guarantee[str(chosen_center)][:,0] )
+						and np.all(self.twoface_normals.dot(self.seed.dot(self.normallel.T)) 
+								< self.center_guarantee[str(chosen_center)][:,1]))
+				if generates_correct_chunk:
+					# Break early before we mess it up
+					break
+		self.make_seed_within_constraints(self.all_constraints[chunk_num])
+		print("Chose a seed within constraints for template #"+str(chunk_num)+":")
+		print(self.seed)
+		
+		# Now that "seed" is a valid offset for our chosen chunk, we need to 
+		# determine which superchunk it can fit in.
+		# There should logically be just one option, since the seed uniquely
+		# determines the whole grid.
+		# TODO: (Runs so far have always found either 1 or 2 valid superchunks.
+		# But, should do a more rigorous test, ideally verifying back in 
+		# numpylattice.py that this is inevitable.)
+		
+		hits = self.generate_parents(chunk_num,[0,0,0,0,0,0])
 		
 		# Draw the valid chunk(s)
 		for superchunk in hits:
@@ -826,85 +883,137 @@ class Chunk(MeshInstance):
 			
 			st.begin(Mesh.PRIMITIVE_LINES)
 			st.add_color(Color(1,.2,1))
-			for block in (np.array(all_blocks[i][1]) - offset):
+			for block in (np.array(self.all_blocks[i][1]) - offset):
 				self.draw_block_wireframe(block,st,multiplier)
 			st.commit(self.mesh)
 			self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
 			
 			st.begin(Mesh.PRIMITIVE_LINES)
 			st.add_color(Color(0.5,0,1))
-			for block in (np.array(all_blocks[i][0]) - offset):
+			for block in (np.array(self.all_blocks[i][0]) - offset):
 				self.draw_block_wireframe(block,st,multiplier)
 			st.commit(self.mesh)
 			self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
 		
 		# Now we draw the blocks inside those chunks.
-		sanity_test = (np.array(self.deflation_face_axes).T).dot(chunk_axes_inv_seed)
-		print("Sanity test:")
-		print(sanity_test)
-		print(seed)
+#		sanity_test = (np.array(self.deflation_face_axes).T).dot(chunk_axes_inv_seed)
+#		print("Sanity test:")
+#		print(sanity_test)
+#		print(self.seed)
 		# For now we'll draw strictly the "interior" blocks, but
 		# include the "exterior" chunks.
-		for superchunk in hits:
-			i, offset = superchunk
-			multiplier = 1
-			for chunk in np.concatenate([np.array(all_blocks[i][0]) - offset, np.array(all_blocks[i][1]) - offset]):
-				if np.all(chunk == chunk_as_block_center):
-					print("Looking at the original chunk... "+str(chunk))
-				st = SurfaceTool()
-				st.begin(Mesh.PRIMITIVE_TRIANGLES)
-				st.add_color(Color(r.random(),r.random(),r.random()))
-				# We need to use "offset" plus the current chunk's coordinates to move "seed", 
-				# and combine that with the orientation of the current chunk to
-				# determine which block template to use. The "offset" is 
-				# represented as if chunks were block-sized though, and needs to
-				# be put through the transformation.
-				# The order in which this is done seems pretty influential for 
-				# amount of floating point error.
-				chunk_center_pos = chunk - np.floor(chunk)
-				chunkscaled_position = (np.array(self.deflation_face_axes).T).dot(np.floor(chunk))
-				#chunk_seed = (seed + chunkscaled_position)#.dot(self.squarallel)
-				chunk_seed = (seed - chunkscaled_position).dot(self.squarallel)
-				if np.all(chunk == chunk_as_block_center):
-					print("Scaled pos was "+str(np.round(chunkscaled_position,3)))
-					print("Seed comparison:")
-					print(seed)
-					print(chunk_seed)
-					print()
-				matches = 0
-				for template_index in range(len(all_blocks)):
-					# Check alignment
-					# TODO Checking alignment shouldn't be necessary - any 'extra'
-					# chunks found would still be rooted at the correct position and
-					# would still belong on the tesselation.
-					template_center = self.possible_centers_live[self.possible_centers.index(all_chosen_centers[template_index])]
-					if np.all((template_center + chunk) 
-							- np.round(template_center + chunk) != 0):
-						# Then check constraint
-						constraint = np.array(all_constraints[template_index])
-						if np.all(chunk == chunk_as_block_center):
-							if chunk_num == template_index:
-								print("Found orgiginal template. Constraint diff:")
-								print(constraint - all_constraints[chunk_num])
-						if (np.all(self.twoface_normals.dot(chunk_seed.dot(self.normallel.T)) >= constraint[:,0] )
-									and np.all(self.twoface_normals.dot(chunk_seed.dot(self.normallel.T)) <= constraint[:,1])):
-							# Then draw! We'll expect a unique match but not check.
-							matches = matches + 1
-							for block in (np.array(all_blocks[template_index][0]) + chunkscaled_position):
-								if (block.dot(self.normalworld.T).dot(self.twoface_normals_w[0]) < 5):
-									self.draw_block(block,st,multiplier)
-						else:
-							if np.all(chunk==chunk_as_block_center) and chunk_num == template_index:
-								print("But seed isn't inside its constraints.")
-				if matches > 0:
-					st.generate_normals()
-					st.commit(self.mesh)
-					self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
-				if matches > 1:
-					print("More than one templates matched a chunk... found "+str(matches)+".")
-				if matches == 0:
-					print("No templates matched the chunk "+str(chunk))
-#					print("Scaled pos was "+str(np.round(chunkscaled_position,3)))
+		for i, offset in hits:
+			self.generate_children(i, offset)
+	
+	
+	
+	
+	
+	def test_templates(self):
+		possible_blocks = set()
+		for blocklayout in self.all_blocks:
+			combined = np.concatenate([blocklayout[0],blocklayout[1]])
+			combined = combined * 2
+			combined = np.array(np.round(combined),dtype=np.int64)
+			combined = [repr(list(x)) for x in combined]
+			for block in combined:
+				possible_blocks.add(block)
+		print("Set up possible blocks list. "+str(len(possible_blocks))+" occur.")#4042
+		print(time.perf_counter()-starttime)
+
+		possible_layouts = []
+		blocklist = [eval(x) for x in possible_blocks]
+		for blocklayout in self.all_blocks:
+			combined = np.concatenate([blocklayout[0],blocklayout[1]])
+			combined = np.round(combined * 2)
+			layout = np.any(np.all(np.repeat(blocklist,len(combined),axis=0).reshape(-1,len(combined),6) - combined == 0,axis=2),axis=1)
+			novel = True
+			for poss in possible_layouts:
+				if np.all(layout == poss):
+					novel = False
+					debugging.breakpoint()
+			if novel:
+				possible_layouts.append(layout)
+		print("Number of unique layouts according to more careful calculation:")
+		print(len(possible_layouts))
+		print(time.perf_counter()-starttime)
+	
+	def symmetries_search(self):
+		# Interesting note: Though all constraints are unique, they consist
+		# of a very limited set, of just 11 numbers (6 after absolute value).
+		# Well, with no rounding, it's 633 numbers...
+		# Despite this, all but 100 of the 4980 constraints can be distinguished 
+		# by which numbers are present, together with sign. (All can be 
+		# distinguished if we leave out the rounding.)
+		
+		constraint_numsets = []
+		numset_counts = []
+		numset_members = []
+		numset_ids = []
+		numset_offsets = []
+		constraint_numbers = set()
+		for i in range(len(self.all_constraints)):
+			match = False
+			center = self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[i])]
+			center_axes = 1-np.array(center - np.floor(center))*2
+			center_origin = center - np.array(self.deflation_face_axes).T.dot(center_axes)/2
+			center_axis1 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][0]])
+			center_axis2 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][1]])
+			center_axis3 = np.array(self.deflation_face_axes[np.nonzero(center_axes)[0][2]])
+			chunk_corners = np.array([center_origin,
+				center_origin+center_axis1,center_origin+center_axis2,center_origin+center_axis3,
+				center_origin+center_axis1+center_axis2,center_origin+center_axis1+center_axis3,center_origin+center_axis2+center_axis3,
+				center_origin+center_axis1+center_axis2+center_axis3])
+			# We consider all translations, since different chunks have the origin
+			# at different corners.
+			for corner in chunk_corners:
+				shift = (-corner).dot(self.normallel.T)
+				shifted_constraints = self.all_constraints[i] + np.repeat(shift.dot(self.twoface_normals.T).reshape(15,1),2,axis=1)
+				#str_c = [str(pair) for pair in np.array(self.all_constraints[i])]
+				str_c = np.abs(np.round(shifted_constraints,13)).flatten().tolist()
+				for num in str_c: constraint_numbers.add(num)
+				str_c.sort()
+				str_c = str(str_c)
+				if str_c not in set(constraint_numsets):
+					constraint_numsets.append(str_c)
+					numset_counts.append(1)
+					numset_members.append([i])
+					numset_offsets.append([corner])
+					match = True
+				else:
+					numset_counts[constraint_numsets.index(str_c)] += 1
+					numset_members[constraint_numsets.index(str_c)].append(i)
+					numset_offsets[constraint_numsets.index(str_c)].append(corner)
+					numset_ids.append(i)
+					#print("Match with "+str(self.all_constraints[i]))
+		print(str(len(constraint_numbers))+" constraint numbers.")
+		print(str(len(constraint_numsets))+" constraint numsets.")
+		print(str(len([x for x in numset_counts if x == 1]))+" lonely chunks.")
+
+		first_sixer = numset_counts.index(18)
+
+		for i in numset_members[first_sixer]:
+			translation = numset_offsets[first_sixer][numset_members[first_sixer].index(i)]
+			shift = (-translation).dot(self.normallel.T)
+			shifted_constraints = self.all_constraints[i] + np.repeat(shift.dot(self.twoface_normals.T).reshape(15,1),2,axis=1)
+			print(np.round(shifted_constraints,5))
+			# Waste time so we can print
+			#for j in range(5000000):
+			#	_ = i + j
+			#	_ = _ * _ * _ * _
+			print(self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[i])] - translation)
+			print("(originally "+self.all_chosen_centers[i]+")")
+			print(translation)
+			print(i)
+
+		numset_counts.sort()
+		print(numset_counts)
+
+		ordered_str = [[str(pair) for pair in np.round(np.array(self.all_constraints[u]))] for u in numset_ids]
+		for i in range(len(self.all_constraints)):
+
+			permutation = [ordered_str.index(x) for x in [str(pair) for pair in np.array(self.all_constraints[i])]]
+			print(permutation)
 
 class GoldenField:
 	phi = 1.61803398874989484820458683
