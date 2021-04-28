@@ -663,7 +663,7 @@ class Chunk(MeshInstance):
 						np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=1)],axis=0)
 				if np.any(a_hit):
 					print("Some sort of neighbor block hit! ")
-					outside_hits = [(i,block_offsets[j]) for i in np.nonzero(a_hit)[0]]
+					outside_hits = [(i,block_offsets[j]) for j in np.nonzero(a_hit)[0]]
 					break
 #		if len(inside_hits) == 0 and len(outside_hits) == 0:
 #			# The slow way
@@ -716,6 +716,8 @@ class Chunk(MeshInstance):
 		chunk_axes_inv = np.linalg.inv(np.array(self.deflation_face_axes).T)
 		chunk_as_block_center = np.round(chunk_axes_inv.dot(chosen_center)*2)/2.0
 		
+		children = []
+		
 		multiplier = 1
 		for chunk in np.concatenate([np.array(self.all_blocks[i][0]) - offset, np.array(self.all_blocks[i][1]) - offset]):
 			if np.all(chunk == chunk_as_block_center):
@@ -760,8 +762,9 @@ class Chunk(MeshInstance):
 						# Then draw! We'll expect a unique match but not check.
 						matches = matches + 1
 						for block in (np.concatenate([np.array(self.all_blocks[template_index][0]),
-									np.array(self.all_blocks[template_index][0])]) + chunkscaled_position):
-							if (block[1] == 0):#block.dot(self.normalworld.T).dot(self.normalworld.T[0]) < 5
+									np.array(self.all_blocks[template_index][1])]) + chunkscaled_position):
+							children.append(block)
+							if ( block[0] + block[1] + block[2] == 5):# and block[5] in list(np.arange(20)-10.5)):#block.dot(self.normalworld.T).dot(self.normalworld.T[0]) < 5
 								#and block[0] == 0):
 								self.draw_block(block,st,multiplier)
 #						if chunk_num == template_index:
@@ -778,6 +781,7 @@ class Chunk(MeshInstance):
 			if matches == 0:
 				print("No templates matched the chunk "+str(chunk))
 #					print("Scaled pos was "+str(np.round(chunkscaled_position,3)))
+		return children
 	
 	def _ready(self):
 		starttime = time.perf_counter()
@@ -902,8 +906,10 @@ class Chunk(MeshInstance):
 #		print(self.seed)
 		# For now we'll draw strictly the "interior" blocks, but
 		# include the "exterior" chunks.
+		children = []
 		for i, offset in hits:
-			self.generate_children(i, offset)
+			children += self.generate_children(i, offset)
+		
 	
 	
 	
