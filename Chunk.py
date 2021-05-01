@@ -448,7 +448,7 @@ class Chunk(MeshInstance):
 		return min(np.min(self.twoface_normals.dot(threevector) - np.array(constraints)[:,0]),
 					np.min(-self.twoface_normals.dot(threevector) + np.array(constraints)[:,1]))
 	
-	def generate_parents(self,template_index,offset):
+	def generate_parents(self,template_index,offset,level=1):
 		"""
 		Takes a chunk template (as an index into self.all_blocks etc) and the
 		offset at which the chunk's relative origin sits, and returns at least
@@ -457,12 +457,16 @@ class Chunk(MeshInstance):
 		template along with where its own origin will belong. Note, the returned
 		offsets are scaled as if the child chunk were a single block, and 
 		should be scaled up in order to be drawn etc.
-		TODO: This should take a 'level' argument or require an appropriately 
-		scaled 'seed' so that it can be used to generate other levels of the
-		hierarchy.
+		'level' specifies the level of the chunk being handed to us; the returned 
+		chunk will be one level higher. Level '0' represents blocks, '1' 
+		represents the first chunks, etc. The effect of the level parameter is
+		to map self.seed to an equivalent value for level + 1, before performing
+		the search; the 'offset' is mapped up one level regardless of the given
+		'level', being assumed to give coordinates of the given chunk in terms
+		of blocks.
 		"""
-		if np.linalg.norm(offset) > 0:
-			raise NotImplementedError("Nonzero offset not implemented yet.")
+#		if np.linalg.norm(offset) > 0:
+#			raise NotImplementedError("Nonzero offset not implemented yet.")
 		
 		chosen_center = self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[template_index])]
 		ch3_member = np.ceil(chosen_center)-np.floor(chosen_center)
@@ -497,19 +501,11 @@ class Chunk(MeshInstance):
 		# seed is what needs to be tested against the new constraints, or vice
 		# versa.
 		
-		chunk_axes = np.array(self.deflation_face_axes)[np.array(np.nonzero(1-ch3_member)[0])]
-		reproportioned_center = chosen_center.dot(self.squareworld)+math.pow(self.phi,6)*chosen_center.dot(self.squarallel)
-		reproportioned_seed = self.seed*math.pow(self.phi,6)
-		print("Reproportioned center: "+str(reproportioned_center))
-		rescaled_center = reproportioned_center/(self.phi*self.phi*self.phi)#(2*reproportioned_center.dot(chunk_axes[0]))
-		rescaled_seed = reproportioned_seed/(self.phi*self.phi*self.phi)#(2*reproportioned_center.dot(chunk_axes[0]))
-		print("Rescaled center: "+str(rescaled_center))
+		# Raising the matrix to the power -level, we get the inverse of the
+		# matrix raised to the power.
+		chunk_axes_inv = np.linalg.matrix_power(np.array(self.deflation_face_axes).T,-level)
 		
-		chunk_axes_inv = np.linalg.inv(np.array(self.deflation_face_axes).T)
-		#chunk_axes_inv = np.linalg.inv(np.array(self.deflation_face_axes))
-		chunk_axes_inv_seed = chunk_axes_inv.dot(self.seed)
-		print("Using chunk inverse: "+str(chunk_axes_inv.dot(chosen_center)))
-		print("Rescaled seed: "+str(chunk_axes_inv_seed))
+		chunk_axes_inv_seed = chunk_axes_inv.dot((self.seed).dot(self.squarallel))
 		
 		# Does this seed fall within our constraint region?
 		# Seeds are equivalent under integer addition and subtration, but
@@ -543,6 +539,38 @@ class Chunk(MeshInstance):
 					and np.all(self.twoface_normals.dot(chunk_axes_inv_seed.dot(self.normallel.T)) 
 								<= self.center_guarantee[chunk][:,1])
 					for chunk in self.possible_centers])))
+		
+		# Nonetheless: successive applications of the chunk transformation make
+		# our seed further and further from the origin. What's happening can be
+		# pictured as: we start with an origin which is not a superchunk corner,
+		# not a supersuperchunk corner, not a supersupersuperchunk corner, etc. -
+		# so if we repeatedly convert the seed to more-and-more-super coordinates,
+		# it eventually falls outside the constraints, representative of the fact
+		# that our origin point is not in the lattice on this level. At such a
+		# point, it no longer makes sense to translate the seed by the current
+		# level's integer lattice, to check whether a point is sufficiently
+		# near the worldplane.
+		
+		# So we need a process where we carefully step up the levels. Whenever
+		# we find that a step leaves us measuring the seed from a point which
+		# is no longer close enough to the worldplane be included, we need to
+		# switch to a nearby point which *is* included. The way in which this
+		# is navigated undoubtedly will affect how much floating point error
+		# is accumulated.
+		
+		#TODO figure out what the best way of minimizing floating point error is.
+		# For now I'll start with a point we know is on the lattice at the right
+		# level - namelely the "offset" we're handed - and transform the seed in
+		# one step.
+		
+		# "offset" starts out at the level "level", and the seed starts out at
+		# level 1, so we want to apply deflation_face_axes level-1 times.
+		lowered_offset = np.linalg.matrix_power(np.array(self.deflation_face_axes),(level-1)).dot(offset)
+		safer_seed = (self.seed - lowered_offset).dot(self.squarallel)
+		chunk_axes_inv_seed = chunk_axes_inv.dot(safer_seed)
+		print("Calculating seed from safe point "+str(lowered_offset))
+		print("Translated seed (should be < "+str(round(math.pow(1/4.7,level),2))+"):"+str(safer_seed))
+		print("Rescaled seed: "+str(chunk_axes_inv_seed))
 		
 		# With the chunk and seed mapped down to block size, we can picture the old blocks present
 		# as sub-blocks -- points which could be included in the grid if we widened the neighbor
@@ -590,7 +618,14 @@ class Chunk(MeshInstance):
 		# I should be able to introduce a rule for which chunk "owns" a block
 		# within such a lookup method.
 		
-		chunk_as_block_center = np.round(chunk_axes_inv.dot(chosen_center)*2)/2.0
+		# We only want to apply the matrix here once; we're assuming both
+		# chunk_center and offset are already in terms of the scale one level
+		# down.
+		chunk_as_block_center = np.round((np.linalg.inv(self.deflation_face_axes)).dot(chosen_center+offset)*2)/2.0
+		chunk_as_block_origin = np.round(np.linalg.inv(self.deflation_face_axes).dot(offset))
+		print("Rescaled chunk center: "+str(chunk_as_block_center))
+		print("Rescaled chunk origin: "+str(np.linalg.inv(self.deflation_face_axes).dot(offset)))
+		
 		
 		closest_non_hit = None
 		inside_hits = []
@@ -598,18 +633,23 @@ class Chunk(MeshInstance):
 		for i in range(len(self.all_blocks)):
 			inside_blocks = np.array(self.all_blocks[i][0])
 			constraint = np.array(self.all_constraints[i])
+			# aligned_blocks still have coords relative to the template
 			aligned_blocks = inside_blocks[np.nonzero(np.all(inside_blocks - chunk_as_block_center
 				- np.round(inside_blocks - chunk_as_block_center) == 0,axis=1))[0]]
 			if len(list(aligned_blocks)) == 0:
 				continue
-			block_offsets = aligned_blocks - chunk_as_block_center
-			translated_seeds = (chunk_axes_inv_seed + block_offsets).dot(self.normallel.T)
-			#translated_seeds = (chunk_axes_inv_seed - block_offsets).dot(self.normallel.T)
+			# block_offsets measures from template origin to the canonical corner of each block
+			block_offsets = aligned_blocks - chunk_as_block_center + chunk_as_block_origin
+			# We find proposed placement of the template by subtracting these.
+			proposed_origins = -block_offsets
+			# proposed_origins are relative to where the seed's been *translated*, ie,
+			# chunk_as_block_origin. We then translate the seed the extra inch...
+			translated_seeds = (chunk_axes_inv_seed - proposed_origins).dot(self.normallel.T)
 			a_hit = np.all([np.all(self.twoface_normals.dot( translated_seeds.T ).T >= constraint[:,0],axis=1),
 					np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=1)],axis=0)
 			if np.any(a_hit):
 				print("We're inside template #"+str(i)+", at offset"+str(block_offsets[np.array(np.nonzero(a_hit))[0,0]]))
-				inside_hits = [(i,block_offsets[j]) for j in np.nonzero(a_hit)[0]]
+				inside_hits = [(i,proposed_origins[j]+chunk_as_block_origin) for j in np.nonzero(a_hit)[0]]
 				break
 #		if len(inside_hits) == 0:
 #			print("Trying for-loop search")
@@ -645,8 +685,6 @@ class Chunk(MeshInstance):
 #						if positive_means_yes > closest_non_hit[2]:
 #							closest_non_hit = (i, block, positive_means_yes)
 		# Checking outside blocks takes a lot longer, we only want to  do it if we need to
-		# TODO This faster numpy version doesn't seem to agree with the slower code - what's 
-		# the difference?
 		if len(inside_hits) == 0:
 			for i in range(len(self.all_blocks)):
 				outside_blocks = np.array(self.all_blocks[i][1])
@@ -656,14 +694,14 @@ class Chunk(MeshInstance):
 				if len(list(aligned_blocks)) == 0:
 					#print("Somehow no aligned blocks on template#"+str(i))
 					continue
-				block_offsets = aligned_blocks - chunk_as_block_center
-				translated_seeds = (chunk_axes_inv_seed + block_offsets).dot(self.normallel.T)
-				#translated_seeds = (chunk_axes_inv_seed - block_offsets).dot(self.normallel.T)
+				block_offsets = aligned_blocks - chunk_as_block_center + chunk_as_block_origin
+				proposed_origins = -block_offsets
+				translated_seeds = (chunk_axes_inv_seed -proposed_origins).dot(self.normallel.T)
 				a_hit = np.all([np.all(self.twoface_normals.dot( translated_seeds.T ).T >= constraint[:,0],axis=1),
 						np.all(self.twoface_normals.dot( translated_seeds.T ).T <= constraint[:,1],axis=1)],axis=0)
 				if np.any(a_hit):
 					print("Some sort of neighbor block hit! ")
-					outside_hits = [(i,block_offsets[j]) for j in np.nonzero(a_hit)[0]]
+					outside_hits = [(i,proposed_origins[j]+chunk_as_block_origin) for j in np.nonzero(a_hit)[0]]
 					break
 #		if len(inside_hits) == 0 and len(outside_hits) == 0:
 #			# The slow way
@@ -707,24 +745,33 @@ class Chunk(MeshInstance):
 		
 		return hits
 	
-	def generate_children(self,i,offset):
+	def generate_children(self,i,offset,level=2):
+		"""
+		Takes a chunk, represented by a chunk template (as an index i suitable 
+		for self.all_blocks etc.) together with an offset for where that chunk 
+		lies, and returns appropriate child chunks, based on the seed, which 
+		would fill out each 'block' in the given chunk.
+		The 'level' of the chunk is the number of times one would have to 
+		generate children to get to 'block' scale; IE, a level 1 chunk contains 
+		blocks, a level 2 chunk contains chunks that contain blocks. When given 
+		a level of 1 or below, however, chunk templates are still returned, 
+		allowing arbitrary subdivision.
+		'offset' is interpreted in the coordinates of the blocks of the chunk - 
+		ie, at one level below what's given in 'level'.
+		Return value is a list of tuples (index,location), giving an index 
+		suitable for self.all_blocks etc, and a location in coordinates of the
+		same level as the children.
 		"""
 		
-		"""
-		
-		chosen_center = self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[i])]
-		chunk_axes_inv = np.linalg.inv(np.array(self.deflation_face_axes).T)
-		chunk_as_block_center = np.round(chunk_axes_inv.dot(chosen_center)*2)/2.0
+		# Move seed to our offset, then scale it
+		absolute_offset = np.linalg.matrix_power(self.deflation_face_axes,level-1).dot(offset)
+		translated_seed = (self.seed-absolute_offset).dot(self.squarallel)
+		# Seed belongs two levels below the current one
+		current_level_seed = np.linalg.matrix_power(self.deflation_face_axes,2-level).dot(translated_seed)
 		
 		children = []
 		
-		multiplier = 1
-		for chunk in np.concatenate([np.array(self.all_blocks[i][0]) - offset, np.array(self.all_blocks[i][1]) - offset]):
-			if np.all(chunk == chunk_as_block_center):
-				print("Looking at the original chunk... "+str(chunk))
-			st = SurfaceTool()
-			st.begin(Mesh.PRIMITIVE_TRIANGLES)
-			st.add_color(Color(r.random(),r.random(),r.random()))
+		for chunk in np.concatenate([np.array(self.all_blocks[i][0]), np.array(self.all_blocks[i][1])]):
 			# We need to use "offset" plus the current chunk's coordinates to move "seed", 
 			# and combine that with the orientation of the current chunk to
 			# determine which block template to use. The "offset" is 
@@ -732,16 +779,10 @@ class Chunk(MeshInstance):
 			# be put through the transformation.
 			# The order in which this is done seems pretty influential for 
 			# amount of floating point error.
-			chunk_center_pos = chunk - np.floor(chunk)
-			chunkscaled_position = (np.array(self.deflation_face_axes).T).dot(np.floor(chunk))
-			#chunk_seed = (seed + chunkscaled_position)#.dot(self.squarallel)
-			chunk_seed = (self.seed - chunkscaled_position).dot(self.squarallel)
-#				if np.all(chunk == chunk_as_block_center):
-#					print("Scaled pos was "+str(np.round(chunkscaled_position,3)))
-#					print("Seed comparison:")
-#					print(self.seed)
-#					print(chunk_seed)
-#					print()
+			chunkscaled_position = (np.array(self.deflation_face_axes)).dot(np.floor(chunk))
+			chunkscaled_offset = (np.array(self.deflation_face_axes)).dot(offset)
+			chunk_seed = (current_level_seed - chunkscaled_position).dot(self.squarallel)
+			
 			matches = 0
 			for template_index in range(len(self.all_blocks)):
 				# Check alignment
@@ -749,33 +790,17 @@ class Chunk(MeshInstance):
 				# chunks found would still be rooted at the correct position and
 				# would still belong on the tesselation.
 				template_center = self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[template_index])]
-				if np.all((template_center + chunk) 
-						- np.round(template_center + chunk) != 0):
+				if np.all((template_center + chunk) - np.round(template_center + chunk) != 0):
 					# Then check constraint
 					constraint = np.array(self.all_constraints[template_index])
-#					if np.all(chunk == chunk_as_block_center):
-#						if chunk_num == template_index:
-#							print("Found original template.")
-#						if (np.all(self.twoface_normals.dot(chunk_seed.dot(self.normallel.T)) >= constraint[:,0] )
-#									and np.all(self.twoface_normals.dot(chunk_seed.dot(self.normallel.T)) <= constraint[:,1])):
+					
 					if self.satisfies(chunk_seed, constraint):
-						# Then draw! We'll expect a unique match but not check.
+						# Found it! We'll expect a unique match but not check.
 						matches = matches + 1
-						for block in (np.concatenate([np.array(self.all_blocks[template_index][0]),
-									np.array(self.all_blocks[template_index][1])]) + chunkscaled_position):
-							children.append(block)
-							if ( block[0] + block[1] + block[2] == 5):# and block[5] in list(np.arange(20)-10.5)):#block.dot(self.normalworld.T).dot(self.normalworld.T[0]) < 5
-								#and block[0] == 0):
-								self.draw_block(block,st,multiplier)
-#						if chunk_num == template_index:
-#							print("And our seed satisfies the original constraints!")
-#					else:
-#						if np.all(chunk==chunk_as_block_center) and chunk_num == template_index:
-#							print("But seed isn't inside its constraints.")
-			if matches > 0:
-				st.generate_normals()
-				st.commit(self.mesh)
-				self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
+						children.append((template_index,chunkscaled_position + chunkscaled_offset))
+#						for block in (np.concatenate([np.array(self.all_blocks[template_index][0]),
+#									np.array(self.all_blocks[template_index][1])]) + chunkscaled_position + chunkscaled_offset):
+#							children.append(block)
 			if matches > 1:
 				print("More than one templates matched a chunk... found "+str(matches)+".")
 			if matches == 0:
@@ -879,6 +904,17 @@ class Chunk(MeshInstance):
 		
 		hits = self.generate_parents(chunk_num,[0,0,0,0,0,0])
 		
+		print("Trying to generate super-super-chunk...")
+		print(time.perf_counter()-starttime)
+		superhits = self.generate_parents(hits[0][0],hits[0][1],level=2)
+		print("Got "+str(len(superhits))+" supersuperchunks")
+		print(time.perf_counter()-starttime)
+		
+		all_superchunks = []
+		for i, offset in superhits:
+			all_superchunks += self.generate_children(i,offset,level=3)
+		print("Superchunks total: "+str(len(all_superchunks)))
+		
 		# Draw the valid chunk(s)
 		for superchunk in hits:
 			i, offset = superchunk
@@ -887,14 +923,33 @@ class Chunk(MeshInstance):
 			
 			st.begin(Mesh.PRIMITIVE_LINES)
 			st.add_color(Color(1,.2,1))
-			for block in (np.array(self.all_blocks[i][1]) - offset):
+			for block in (np.array(self.all_blocks[i][1]) + offset):
 				self.draw_block_wireframe(block,st,multiplier)
 			st.commit(self.mesh)
 			self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
 			
 			st.begin(Mesh.PRIMITIVE_LINES)
 			st.add_color(Color(0.5,0,1))
-			for block in (np.array(self.all_blocks[i][0]) - offset):
+			for block in (np.array(self.all_blocks[i][0]) + offset):
+				self.draw_block_wireframe(block,st,multiplier)
+			st.commit(self.mesh)
+			self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
+		
+		# Draw the valid superchunks?
+		for (i, offset) in superhits:
+			multiplier = math.pow(self.phi,6)
+			st = SurfaceTool()
+			
+			st.begin(Mesh.PRIMITIVE_LINES)
+			st.add_color(Color(.2,1,1))
+			for block in (np.array(self.all_blocks[i][1]) + offset):
+				self.draw_block_wireframe(block,st,multiplier)
+			st.commit(self.mesh)
+			self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
+			
+			st.begin(Mesh.PRIMITIVE_LINES)
+			st.add_color(Color(0,0.5,1))
+			for block in (np.array(self.all_blocks[i][0]) + offset):
 				self.draw_block_wireframe(block,st,multiplier)
 			st.commit(self.mesh)
 			self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
@@ -907,8 +962,24 @@ class Chunk(MeshInstance):
 		# For now we'll draw strictly the "interior" blocks, but
 		# include the "exterior" chunks.
 		children = []
-		for i, offset in hits:
+		for i, offset in all_superchunks:
 			children += self.generate_children(i, offset)
+			print(len(children))
+		
+		# Draw these
+		multiplier = 1
+		st = SurfaceTool()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		st.add_color(Color(r.random(),r.random(),r.random()))
+		for i, offset in children:
+			for block in (np.concatenate([self.all_blocks[i][0],self.all_blocks[i][1]]) + offset):
+				if ( block[0] + block[1] + block[2] == 0):# and block[5] in list(np.arange(20)-10.5)):#block.dot(self.normalworld.T).dot(self.normalworld.T[0]) < 5
+					#and block[0] == 0):
+					self.draw_block(block,st,multiplier)
+		if len(children) > 0:
+			st.generate_normals()
+			st.commit(self.mesh)
+			self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
 		
 	
 	
