@@ -771,7 +771,39 @@ class Chunk(MeshInstance):
 		
 		children = []
 		
-		for chunk in np.concatenate([np.array(self.all_blocks[i][0]), np.array(self.all_blocks[i][1])]):
+		chunks = np.concatenate([np.array(self.all_blocks[i][0]), np.array(self.all_blocks[i][1])])
+		# TODO there are some repeated points here
+		points = np.floor(chunks)
+		
+		chunkscaled_positions = (np.array(self.deflation_face_axes)).dot(np.transpose(points)).T
+		chunkscaled_offset = (np.array(self.deflation_face_axes)).dot(offset)
+		chunk_seeds = (current_level_seed - chunkscaled_positions).dot(self.squarallel)
+		
+		#TODO Integrate this with self.satisfies.
+		print("over to numpy...")
+		is_matches = np.all([
+			np.all(np.transpose(np.tile(self.twoface_normals.dot(chunk_seeds.dot(self.normallel.T).T).T,
+					(len(self.all_constraints),1,1)),[0,1,2]) 
+					>= np.transpose(np.tile(np.array(self.all_constraints)[:,:,0],(len(chunk_seeds),1,1)),[1,0,2]),axis=2),
+			np.all(np.transpose(np.tile(self.twoface_normals.dot(chunk_seeds.dot(self.normallel.T).T).T,
+					(len(self.all_constraints),1,1)),[0,1,2])
+					<= np.transpose(np.tile(np.array(self.all_constraints)[:,:,1],(len(chunk_seeds),1,1)),[1,0,2]),axis=2)],axis=0)
+		print("back from numpy")
+		children = np.concatenate([np.nonzero(is_matches)[0][np.arange(len(np.array(np.nonzero(is_matches))[0]))].reshape(-1,1),
+					chunkscaled_positions[np.nonzero(is_matches)[1][np.arange(len(np.array(np.nonzero(is_matches))[0]))]]+chunkscaled_offset],axis=1)
+		#children = [(np.nonzero(is_matches)[0][i],chunkscaled_positions[np.nonzero(is_matches)[1][i]]+chunkscaled_offset) for i in range(len(np.array(np.nonzero(is_matches))[0]))]
+		print("done reformatting children")
+#		with np.printoptions(edgeitems=150,linewidth=100):
+#			print(is_matches.shape)
+#			print(np.array(np.nonzero(is_matches)).shape)
+#			print(childrens)
+#			print(repr(np.array(np.nonzero(np.all(np.transpose(np.repeat(self.twoface_normals.dot(chunk_seeds.dot(self.normallel.T).T),
+#					len(self.all_constraints),axis=0).reshape(-1,len(self.all_constraints),15),[0,1,2]) 
+#					>= np.transpose(np.repeat(np.array(self.all_constraints)[:,:,0],len(chunk_seeds),axis=0).reshape(-1,len(chunk_seeds),15),[1,0,2]),axis=2)))))
+#			print(repr(np.array(np.nonzero(np.all(np.transpose(np.repeat(self.twoface_normals.dot(chunk_seeds.dot(self.normallel.T).T),
+#					len(self.all_constraints),axis=0).reshape(-1,len(self.all_constraints),15),[0,1,2]) 
+#					<= np.transpose(np.repeat(np.array(self.all_constraints)[:,:,1],len(chunk_seeds),axis=0).reshape(-1,len(chunk_seeds),15),[1,0,2]),axis=2)))))
+#		for chunk in chunks:
 			# We need to use "offset" plus the current chunk's coordinates to move "seed", 
 			# and combine that with the orientation of the current chunk to
 			# determine which block template to use. The "offset" is 
@@ -779,32 +811,41 @@ class Chunk(MeshInstance):
 			# be put through the transformation.
 			# The order in which this is done seems pretty influential for 
 			# amount of floating point error.
-			chunkscaled_position = (np.array(self.deflation_face_axes)).dot(np.floor(chunk))
-			chunkscaled_offset = (np.array(self.deflation_face_axes)).dot(offset)
-			chunk_seed = (current_level_seed - chunkscaled_position).dot(self.squarallel)
-			
-			matches = 0
-			for template_index in range(len(self.all_blocks)):
-				# Check alignment
-				# TODO Checking alignment shouldn't be necessary - any 'extra'
-				# chunks found would still be rooted at the correct position and
-				# would still belong on the tesselation.
-				template_center = self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[template_index])]
-				if np.all((template_center + chunk) - np.round(template_center + chunk) != 0):
-					# Then check constraint
-					constraint = np.array(self.all_constraints[template_index])
-					
-					if self.satisfies(chunk_seed, constraint):
-						# Found it! We'll expect a unique match but not check.
-						matches = matches + 1
-						children.append((template_index,chunkscaled_position + chunkscaled_offset))
-#						for block in (np.concatenate([np.array(self.all_blocks[template_index][0]),
-#									np.array(self.all_blocks[template_index][1])]) + chunkscaled_position + chunkscaled_offset):
-#							children.append(block)
-			if matches > 1:
-				print("More than one templates matched a chunk... found "+str(matches)+".")
-			if matches == 0:
-				print("No templates matched the chunk "+str(chunk))
+#			chunkscaled_position = (np.array(self.deflation_face_axes)).dot(np.floor(chunk))
+#
+#			chunk_seed = (current_level_seed - chunkscaled_position).dot(self.squarallel)
+#
+#			is_match = np.all([np.all(self.twoface_normals.dot(chunk_seed.dot(self.normallel.T)) 
+#						>= np.array(self.all_constraints)[:,:,0],axis=1),
+#				np.all(self.twoface_normals.dot(chunk_seed.dot(self.normallel.T)) 
+#						<= np.array(self.all_constraints)[:,:,1],axis=1)],axis=0)
+#			matches = 0
+#			temp_children = []
+#			for template_index in range(len(self.all_blocks)):
+#				# Check alignment
+#				# TODO Checking alignment shouldn't be necessary - any 'extra'
+#				# chunks found would still be rooted at the correct position and
+#				# would still belong on the tesselation.
+#				template_center = self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[template_index])]
+#				if np.all((template_center + chunk) - np.round(template_center + chunk) != 0):
+#					# Then check constraint
+#					constraint = np.array(self.all_constraints[template_index])
+#
+#					if self.satisfies(chunk_seed, constraint):
+#						# Found it! We'll expect a unique match but not check.
+#						matches = matches + 1
+#						children.append((template_index,chunkscaled_position + chunkscaled_offset))
+#						temp_children.append((template_index,chunkscaled_position + chunkscaled_offset))
+#			for child in np.nonzero(is_match)[0]:
+#				children.append((child,chunkscaled_position + chunkscaled_offset))
+#			matches = len(np.nonzero(is_match)[0])
+##			print(temp_children)
+#			print(np.nonzero(is_match)[0])
+#			print([child in np.array(childrens)[:,0] for child in np.nonzero(is_match)[0]])
+#			if matches > 1:
+#				print("More than one templates matched a chunk... found "+str(matches)+".")
+#			if matches == 0:
+#				print("No templates matched the chunk "+str(chunk))
 #					print("Scaled pos was "+str(np.round(chunkscaled_position,3)))
 		return children
 	
@@ -912,7 +953,7 @@ class Chunk(MeshInstance):
 		
 		all_superchunks = []
 		for i, offset in superhits:
-			all_superchunks += self.generate_children(i,offset,level=3)
+			all_superchunks += [(int(l[0]),l[1:]) for l in self.generate_children(i,offset,level=3)]
 		print("Superchunks total: "+str(len(all_superchunks)))
 		
 		# Draw the valid chunk(s)
@@ -963,7 +1004,7 @@ class Chunk(MeshInstance):
 		# include the "exterior" chunks.
 		children = []
 		for i, offset in all_superchunks:
-			children += self.generate_children(i, offset)
+			children += [(int(l[0]), l[1:]) for l in self.generate_children(i, offset)]
 			print(len(children))
 		
 		# Draw these
