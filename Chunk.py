@@ -779,6 +779,9 @@ class Chunk(MeshInstance):
 		chunkscaled_offset = (np.array(self.deflation_face_axes)).dot(offset)
 		chunk_seeds = (current_level_seed - chunkscaled_positions).dot(self.squarallel)
 		
+		for seed in chunk_seeds:
+			children.append(self.find_satisfied(seed))
+		
 		#TODO Integrate this with self.satisfies.
 		print("over to numpy...")
 		is_matches = np.all([
@@ -789,9 +792,11 @@ class Chunk(MeshInstance):
 					(len(self.all_constraints),1,1)),[0,1,2])
 					<= np.transpose(np.tile(np.array(self.all_constraints)[:,:,1],(len(chunk_seeds),1,1)),[1,0,2]),axis=2)],axis=0)
 		print("back from numpy")
-		children = np.concatenate([np.nonzero(is_matches)[0][np.arange(len(np.array(np.nonzero(is_matches))[0]))].reshape(-1,1),
+		children_ = np.concatenate([np.nonzero(is_matches)[0][np.arange(len(np.array(np.nonzero(is_matches))[0]))].reshape(-1,1),
 					chunkscaled_positions[np.nonzero(is_matches)[1][np.arange(len(np.array(np.nonzero(is_matches))[0]))]]+chunkscaled_offset],axis=1)
 		#children = [(np.nonzero(is_matches)[0][i],chunkscaled_positions[np.nonzero(is_matches)[1][i]]+chunkscaled_offset) for i in range(len(np.array(np.nonzero(is_matches))[0]))]
+		print(len(children))
+		print(len(children_))
 		print("done reformatting children")
 #		with np.printoptions(edgeitems=150,linewidth=100):
 #			print(is_matches.shape)
@@ -849,6 +854,22 @@ class Chunk(MeshInstance):
 #					print("Scaled pos was "+str(np.round(chunkscaled_position,3)))
 		return children
 	
+	def find_satisfied(self, seedvalue):
+		"""
+		Takes a seedvalue and returns a chunk template index which would satisfy
+		that seed at the origin.
+		"""
+		seed_15 = self.twoface_normals.dot(seedvalue.dot(self.normallel.T))
+		seed_indices = np.zeros(15,dtype=np.int)
+		for i in range(15):
+			#TODO A binary search would be faster
+			for j in range(len(self.constraint_nums[i])):
+				if self.constraint_nums[i][j] <= seed_15[i]:
+					seed_indices[i] = j
+		print(list(self.constraint_lookup.keys())[0])
+		print()
+		return self.constraint_lookup[str(list(seed_indices))]
+	
 	def _ready(self):
 		starttime = time.perf_counter()
 		
@@ -867,6 +888,186 @@ class Chunk(MeshInstance):
 		print("Done loading "+str(len(self.all_constraints))+" templates")
 		print(time.perf_counter()-starttime)
 		
+		self.constraint_nums = [set(),set(),set(),set(),set(),set(),set(),set(),set(),set(),
+									set(),set(),set(),set(),set()]
+		for i in range(len(self.all_constraints)):
+			for j in range(15):
+				self.constraint_nums[j] = self.constraint_nums[j].union(set(self.all_constraints[i][j]))
+		for i in range(15):
+			sorted = list(self.constraint_nums[i])
+			sorted.sort()
+			self.constraint_nums[i] = sorted
+		
+		# Size of constraint_nums in each dimension:
+		# 400, 364, 574, 372, 395, 359, 504, 553, 382, 369, 470, 556, 404, 351, 359
+		
+		# We want to simplify the constraints. Many span more than half of one
+		# of their 15 dimensions, but those values aren't actually realizable
+		# because some of the other dimensions are pinned down to a range of
+		# 1 or 2 constraint_nums values. So we want to see what values are actually
+		# realizable, and collapse these large ranges down, but without adding 
+		# to the size of constraint_nums -- just collapse them to the 
+		# most snug value that's already used somewhere.
+		self.all_simplified = []
+		for i in range(len(self.all_constraints)):
+			#print( [self.constraint_nums[dim].index(np.array(self.all_constraints[i])[dim,1]) 
+			#				- self.constraint_nums[dim].index(np.array(self.all_constraints[i])[dim,0]) for dim in range(15)] )
+			# To figure out what's relevant, we acquire a point inside the constraints
+			# and re-base them as distance from that point. (This would have been easier
+			# done when they were first created, since they were originally generated
+			# as relative distance like this.)
+			# (This step adds about 40 seconds)
+			self.seed = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
+			self.make_seed_within_constraints(self.all_constraints[i])
+			translated_constraints = (np.array(self.all_constraints[i]).T - np.array(self.twoface_normals).dot(self.seed.dot(self.normallel.T))).T
+			
+			# Sort all 30 constraints by how distant they are from this point.
+			fields = [('tc',np.float),('index',np.int),('dir',np.int)]
+			aug_tc = ([(np.abs(translated_constraints[j][0]), j, -1) for j in range(15)] 
+					+ [(np.abs(translated_constraints[j][1]), j, 1) for j in range(15)])
+			sorted_tc = np.sort(np.array(aug_tc,dtype=fields),order='tc')
+			
+			# Now get an initial box based on the closest constraints.
+			# What we'll be storing is the corners.
+			close1 = sorted_tc[0]['index']
+			close2 = sorted_tc[1]['index']
+			close3 = sorted_tc[2]['index']
+			if close1 == close2:
+				close2 = sorted_tc[2]['index']
+				close3 = sorted_tc[3]['index']
+				if close2 == close3:
+					close3 = sorted_tc[4]['index']
+					if close1 == close3:
+						print("impossible")
+						close3 == sorted_tc[5]['index']
+				if close1 == close3:
+					print("impossible")
+					close3 = sorted_tc[4]['index']
+			if close2 == close3:
+				close3 = sorted_tc[3]['index']
+				if close1 == close3:
+					close3 = sorted_tc[4]['index']
+			corners = []
+			basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
+			attempt_index = 0
+			old_value = close3
+			while np.linalg.det(basis_matrix) == 0 and attempt_index < 30:
+				close3 = sorted_tc[attempt_index]['index']
+				basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
+				attempt_index += 1
+			if attempt_index == 30:
+				close3 = old_value
+				old_value = close2
+				attempt_index = 0
+				while np.linalg.det(basis_matrix) == 0 and attempt_index < 30:
+					close2 = sorted_tc[attempt_index]['index']
+					basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
+					attempt_index += 1
+				if attempt_index == 30:
+					close2 = old_value
+					old_value = close1
+					attemp_index = 0
+					while np.linalg.det(basis_matrix) == 0 and attempt_index < 30:
+						close1 = sorted_tc[attempt_index]['index']
+						basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
+						attempt_index += 1
+					if attempt_index == 30:
+						close1 = old_value
+						print("utter defeat!!!!!!!!!!")
+			#print(basis_matrix)
+			#print(str(close1)+", "+str(close2)+", "+str(close3))
+			# We use both directions of these initial constraints, just to get a complete box.
+			for dirspec in [(0,0,0),(0,0,1),(0,1,0),(0,1,1),(1,0,0),(1,0,1),(1,1,0),(1,1,1)]:
+				# We'll build this up in global space rather than translated.
+				# I'm a little shaky on whether the corner calculation here is right.
+				new_corner = np.linalg.solve(basis_matrix
+								, [self.all_constraints[i][close1][dirspec[0]],self.all_constraints[i][close2][dirspec[1]],
+									self.all_constraints[i][close3][dirspec[2]]] )
+#				new_corner = np.array(self.all_constraints[i][close1][dirspec[0]]*self.twoface_normals[close1])
+#				new_corner = (new_corner 
+#							+ (self.twoface_normals[close2] - self.twoface_normals[close1].dot(self.twoface_normals[close2]))
+#							* (self.all_constraints[i][close2][dirspec[1]] - new_corner.dot(self.twoface_normals[close1]))
+#							/ math.pow(np.linalg.norm(self.twoface_normals[close2] 
+#								- self.twoface_normals[close1].dot(self.twoface_normals[close2])),2) )
+#				new_corner = (new_corner 
+#							+ (self.twoface_normals[close3] - self.twoface_normals[close1].dot(self.twoface_normals[close2]))
+#							* (self.all_constraints[i][close2][dirspec[1]] - new_corner.dot(self.twoface_normals[close1]))
+#							/ math.pow(np.linalg.norm(self.twoface_normals[close2] 
+#								- self.twoface_normals[close1].dot(self.twoface_normals[close2])),2) ) )
+				corners.append(new_corner)
+			
+			
+			# TODO: If I ever want perfect snugness, I'll need to check: does 
+			# this end up different if we find all the (relevant) corners first,
+			# then snug things up? 
+			snugged = np.array(self.all_constraints[i])
+			for cst in sorted_tc:
+				# Check all corners' magnitude in this direction
+				corner_dots = np.sort([corner.dot(self.twoface_normals[cst['index']]) for corner in corners])
+				
+				# Is the seed inside the corners?
+				seed_dot = self.seed.dot(self.normallel.T).dot(self.twoface_normals[cst['index']])
+				if seed_dot > corner_dots[-1] or seed_dot < corner_dots[0]:
+					print("\t\t\tSEED OUTSIDE ITS BOX")
+				
+				# Want to use the lowest constraint_num beyond our highest corner.
+				nums = np.array(self.constraint_nums[cst['index']])
+				
+				if cst['dir'] == 1:
+					if self.all_constraints[i][cst['index']][1] > max(corner_dots):
+						# This direction doesn't affect the overall constraint. Can
+						# we bring it closer?
+						smallest = snugged[cst['index']][1]
+						for f in range(len(nums)):
+							if nums[f] >= max(corner_dots):
+								smallest = nums[f]
+								break
+						snugged[cst['index']][1] = smallest
+					else:
+						# Constraint does affect shape. Add more corners.
+						# Skipping this for now - we merely need a little snugness,
+						# not perfect snugness.
+						pass
+				if cst['dir'] == -1:
+					smallest = snugged[cst['index']][0]
+					if self.all_constraints[i][cst['index']][0] < min(corner_dots):
+						for f in range(len(nums)-1,-1,-1):
+								if nums[f] <= min(corner_dots):
+									smallest = nums[f]
+									break
+					snugged[cst['index']][0] = smallest
+				#smallest = cst['dir']*max(cst['dir']*nums[cst['dir']*nums >= cst['dir']*corner_dots[-1*cst['dir']]])
+					
+				if not self.satisfies_by(self.seed,snugged) > 0:
+					print(str(cst['dir'])+" Seed got excluded")
+				if (self.all_constraints[i][cst['index']][1] - self.all_constraints[i][cst['index']][0] 
+						< snugged[cst['index']][1] - snugged[cst['index']][0]):
+					print(str(cst['dir'])+"Somehow made constraint wider")
+			self.all_simplified.append(snugged)
+			
+			print("Simplified comparison:")
+			print(self.satisfies_by(self.seed,self.all_constraints[i]))
+			print(self.satisfies_by(self.seed,self.all_simplified[i]))
+		print("Length of simplified constraints:")
+		print(len(self.all_simplified))
+		
+		
+		# We can't make a big 15-dimensional array, it would take larger amounts
+		# of memory than I know a name for. And I don't see a convenient sparse
+		# array solution, so I'm going to use a dict with the coordinates as keys.
+		self.constraint_lookup = dict()
+		for i in range(len(self.all_constraints)):
+			c = self.constraint_nums
+			n = list(np.array(self.all_constraints[i])[:,0])
+			n2 = list(np.array(self.all_constraints[i])[:,1])
+			#print(c[0].index(n2[0])-c[0].index(n[0]))
+			key = str([c[0].index(n[0]),c[1].index(n[1]),c[2].index(n[2]),c[3].index(n[3]),c[4].index(n[4]),
+					c[5].index(n[5]),c[6].index(n[6]),c[7].index(n[7]),c[8].index(n[8]),c[9].index(n[9]),
+					c[10].index(n[10]),c[11].index(n[11]),c[12].index(n[12]),c[13].index(n[13]),c[14].index(n[14])])
+			self.constraint_lookup[key] = i
+		
+		print("Done hashing constraints")
+		print(time.perf_counter()-starttime)
 		
 		# Choose one chunk to display
 		chunk_num = r.choice(range(len(self.all_blocks)))
@@ -886,7 +1087,7 @@ class Chunk(MeshInstance):
 		# I'll call this the "seed" since it will determine the entire lattice.
 		
 		# Starting value, will get moved to inside the chosen chunk orientation constraints.
-		self.seed = np.array([-r.random()*0.1,-r.random()*0.1,-r.random()*0.1,-r.random()*0.1,-r.random()*0.1,-r.random()*0.1])
+		self.seed = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
 		self.seed = self.seed.dot(self.squarallel)
 		
 		self.center_guarantee = dict()
@@ -934,6 +1135,21 @@ class Chunk(MeshInstance):
 		self.make_seed_within_constraints(self.all_constraints[chunk_num])
 		print("Chose a seed within constraints for template #"+str(chunk_num)+":")
 		print(self.seed)
+		
+		# Possible optimization experiment
+#		possible_children = set()
+#		for i in range(2000):
+#			self.seed = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
+#			self.seed = self.seed.dot(self.squarallel)
+#			self.make_seed_within_constraints(self.all_constraints[chunk_num])
+#			child_strings = set([str(ch) for ch in self.generate_children(i,[0,0,0,0,0,0])])
+#			possible_children = child_strings.union(possible_children)
+#			#child_nums = set([ch[0] for ch in self.generate_children(i,[0,0,0,0,0,0])])
+#			#possible_children = child_nums.union(possible_children)
+#			#child_strings = set([str(self.generate_children(i,[0,0,0,0,0,0]))])
+#			#possible_children = child_strings.union(possible_children)
+#			print(str(i)+": "+str(len(possible_children)))
+		
 		
 		# Now that "seed" is a valid offset for our chosen chunk, we need to 
 		# determine which superchunk it can fit in.
