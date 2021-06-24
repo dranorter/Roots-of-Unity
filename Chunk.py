@@ -1045,11 +1045,14 @@ class Chunk(MeshInstance):
 					print(str(cst['dir'])+"Somehow made constraint wider")
 			self.all_simplified.append(snugged)
 			
-			print("Simplified comparison:")
-			print(self.satisfies_by(self.seed,self.all_constraints[i]))
-			print(self.satisfies_by(self.seed,self.all_simplified[i]))
+#			print("Simplified comparison:")
+#			print(self.satisfies_by(self.seed,self.all_constraints[i]))
+#			print(self.satisfies_by(self.seed,self.all_simplified[i]))
 		print("Length of simplified constraints:")
 		print(len(self.all_simplified))
+		print(time.perf_counter()-starttime)
+		
+		# Now with somewhat more compact constraints, we 
 		
 		
 		# We can't make a big 15-dimensional array, it would take larger amounts
