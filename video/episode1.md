@@ -42,7 +42,10 @@ Cutting a long story very short, after months of programming and math-ing, I'm s
 Meanwhile, my concept of the game I'm creating has evolved. So here's my over-ambitious feature list.
 
 1) Since I'm preserving the full 6-dimensional location of every block, I'd like to make that available in gameplay somehow. The mechanics I've come up with require a lot of explanation, but basically there should be a way to slowly build out into 6 dimensions, or bridge through 6D to a nearby 3D world, that sits at a different "angle" within 6D. I like the idea of making a mechanic which people could use, without understanding the math.
-*expand this section if the video is too short*
+
+But here's a bit of an explanation. From the point of view of the 6D space, the 3D world is roughly flat, and not aligned to any one of the 6 dimension axes. This world-plane is then corrugated, like a slope in Minecraft, since every voxel lines up exactly with 3 of the 6 dimensions.
+
+So what I'm thinking is there'd be a material which you can place out in the world, surrounding one of these points where the world is corrugated; and then you could hit it, and the corrugation would flip, sort of taking this flat 3-dimensional world and bending it outward slightly into 6-dimensional space. And if you bend it far enough, it "breaks" and lets you walk off the world-grid entirely.
 
 2) One of the first things I want to add to the game is good rain mechanics, with puddles and flowing water. The aesthetic of the game will be very rainy and desolate, at least at first.
 (timestamp unknown)
