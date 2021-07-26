@@ -779,24 +779,29 @@ class Chunk(MeshInstance):
 		chunkscaled_offset = (np.array(self.deflation_face_axes)).dot(offset)
 		chunk_seeds = (current_level_seed - chunkscaled_positions).dot(self.squarallel)
 		
-		for seed in chunk_seeds:
-			children.append(self.find_satisfied(seed))
+		for seed_i in range(len(chunk_seeds)):
+			#is_matches.append(self.find_satisfied(chunk_seeds[seed_i]))
+			children.append((self.find_satisfied(chunk_seeds[seed_i]),chunkscaled_positions[seed_i]+chunkscaled_offset))
 		
-		#TODO Integrate this with self.satisfies.
-		print("over to numpy...")
-		is_matches = np.all([
-			np.all(np.transpose(np.tile(self.twoface_normals.dot(chunk_seeds.dot(self.normallel.T).T).T,
-					(len(self.all_constraints),1,1)),[0,1,2]) 
-					>= np.transpose(np.tile(np.array(self.all_constraints)[:,:,0],(len(chunk_seeds),1,1)),[1,0,2]),axis=2),
-			np.all(np.transpose(np.tile(self.twoface_normals.dot(chunk_seeds.dot(self.normallel.T).T).T,
-					(len(self.all_constraints),1,1)),[0,1,2])
-					<= np.transpose(np.tile(np.array(self.all_constraints)[:,:,1],(len(chunk_seeds),1,1)),[1,0,2]),axis=2)],axis=0)
-		print("back from numpy")
-		children_ = np.concatenate([np.nonzero(is_matches)[0][np.arange(len(np.array(np.nonzero(is_matches))[0]))].reshape(-1,1),
-					chunkscaled_positions[np.nonzero(is_matches)[1][np.arange(len(np.array(np.nonzero(is_matches))[0]))]]+chunkscaled_offset],axis=1)
+		# The below version returns a list of seven numbers, the first of which is the index, and the rest, the coords.
+#		print("over to numpy...")
+#		is_matches = np.all([
+#			np.all(np.transpose(np.tile(self.twoface_normals.dot(chunk_seeds.dot(self.normallel.T).T).T,
+#					(len(self.all_constraints),1,1)),[0,1,2]) 
+#					>= np.transpose(np.tile(np.array(self.all_constraints)[:,:,0],(len(chunk_seeds),1,1)),[1,0,2]),axis=2),
+#			np.all(np.transpose(np.tile(self.twoface_normals.dot(chunk_seeds.dot(self.normallel.T).T).T,
+#					(len(self.all_constraints),1,1)),[0,1,2])
+#					<= np.transpose(np.tile(np.array(self.all_constraints)[:,:,1],(len(chunk_seeds),1,1)),[1,0,2]),axis=2)],axis=0)
+#		print("back from numpy")
+#		children_ = np.concatenate([np.nonzero(is_matches)[0][np.arange(len(np.array(np.nonzero(is_matches))[0]))].reshape(-1,1),
+#					chunkscaled_positions[np.nonzero(is_matches)[1][np.arange(len(np.array(np.nonzero(is_matches))[0]))]]+chunkscaled_offset],axis=1)
 		#children = [(np.nonzero(is_matches)[0][i],chunkscaled_positions[np.nonzero(is_matches)[1][i]]+chunkscaled_offset) for i in range(len(np.array(np.nonzero(is_matches))[0]))]
-		print(len(children))
-		print(len(children_))
+#		print(len(children))
+#		print(len(children_))
+#		print([child[0] for child in children[:10]])
+#		print([child[0] for child in children_[:10]])
+#		print(len(set([child[0] for child in children])))
+#		print(len(set([child[0] for child in children_])))
 		print("done reformatting children")
 #		with np.printoptions(edgeitems=150,linewidth=100):
 #			print(is_matches.shape)
@@ -852,7 +857,8 @@ class Chunk(MeshInstance):
 #			if matches == 0:
 #				print("No templates matched the chunk "+str(chunk))
 #					print("Scaled pos was "+str(np.round(chunkscaled_position,3)))
-		return children_
+		#return [(int(l[0]), l[1:]) for l in children_]
+		return children
 	
 	def find_satisfied(self, seedvalue):
 		"""
@@ -1203,7 +1209,7 @@ class Chunk(MeshInstance):
 		
 		all_superchunks = []
 		for i, offset in superhits:
-			all_superchunks += [(int(l[0]),l[1:]) for l in self.generate_children(i,offset,level=3)]
+			all_superchunks += self.generate_children(i,offset,level=3)#[(int(l[0]),l[1:]) for l in self.generate_children(i,offset,level=3)]
 		print("Superchunks total: "+str(len(all_superchunks)))
 		
 		# Draw the valid chunk(s)
@@ -1254,9 +1260,10 @@ class Chunk(MeshInstance):
 		# include the "exterior" chunks.
 		children = []
 		for i, offset in all_superchunks:
-			children += [(int(l[0]), l[1:]) for l in self.generate_children(i, offset)]
+			children += self.generate_children(i, offset)#[(int(l[0]), l[1:]) for l in self.generate_children(i, offset)]
 			print(len(children))
-		
+		print("All blocks now generated. Time:")
+		print(time.perf_counter()-starttime)
 		# Draw these
 		multiplier = 1
 		st = SurfaceTool()
@@ -1271,6 +1278,8 @@ class Chunk(MeshInstance):
 			st.generate_normals()
 			st.commit(self.mesh)
 			self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
+		print("Mesh updated. Time:")
+		print(time.perf_counter()-starttime)
 		
 	
 	
