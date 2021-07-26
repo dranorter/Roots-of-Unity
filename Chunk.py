@@ -852,7 +852,7 @@ class Chunk(MeshInstance):
 #			if matches == 0:
 #				print("No templates matched the chunk "+str(chunk))
 #					print("Scaled pos was "+str(np.round(chunkscaled_position,3)))
-		return children
+		return children_
 	
 	def find_satisfied(self, seedvalue):
 		"""
@@ -860,15 +860,25 @@ class Chunk(MeshInstance):
 		that seed at the origin.
 		"""
 		seed_15 = self.twoface_normals.dot(seedvalue.dot(self.normallel.T))
-		seed_indices = np.zeros(15,dtype=np.int)
-		for i in range(15):
-			#TODO A binary search would be faster
-			for j in range(len(self.constraint_nums[i])):
-				if self.constraint_nums[i][j] <= seed_15[i]:
-					seed_indices[i] = j
-		print(list(self.constraint_lookup.keys())[0])
-		print()
-		return self.constraint_lookup[str(list(seed_indices))]
+#		seed_indices = np.zeros(15,dtype=np.int)
+#		for i in range(15):
+#			#TODO A binary search would be faster
+#			for j in range(len(self.constraint_nums[i])):
+#				if self.constraint_nums[i][j] <= seed_15[i]:
+#					seed_indices[i] = j
+#		print(list(self.constraint_lookup.keys())[0])
+#		print()
+#		return self.constraint_lookup[str(list(seed_indices))]
+		# The tree ought to get us 1 to 3 possibilities to sort through.
+		hits = self.constraint_tree.find(seed_15)
+		for hit in hits:
+			# TODO Once I'm somewhat confident this tree works, I could skip the
+			# check here when there is only one hit.
+			# TODO We're using all_constraints instead of all_simplified, though
+			# the two should be the same. Could add a check for whether they are.
+			if self.satisfies(seedvalue, self.all_constraints[hit]):
+				return hit
+		raise Exception("No valid hits out of "+str(len(hits))+" hits.")
 	
 	def _ready(self):
 		starttime = time.perf_counter()
@@ -1052,25 +1062,46 @@ class Chunk(MeshInstance):
 		print(len(self.all_simplified))
 		print(time.perf_counter()-starttime)
 		
+		self.simplified_constraint_nums = [set(),set(),set(),set(),set(),set(),set(),set(),set(),set(),
+									set(),set(),set(),set(),set()]
+		for i in range(len(self.all_simplified)):
+			for j in range(15):
+				self.simplified_constraint_nums[j] = self.simplified_constraint_nums[j].union(set(self.all_simplified[i][j]))
+		for i in range(15):
+			sorted = list(self.simplified_constraint_nums[i])
+			sorted.sort()
+			self.simplified_constraint_nums[i] = sorted
+		print("Number of constraint planes before simplification:")
+		print(sum([len(nums) for nums in self.constraint_nums]))
+		print("Number of constraint planes after simplification:")
+		print(sum([len(nums) for nums in self.simplified_constraint_nums]))
+		print([len(dimnums) for dimnums in self.simplified_constraint_nums])
+		
 		# Now with somewhat more compact constraints, we 
+		# oh no, I thought I wrote down more of the plan here. Was I going to make
+		# a tree of some sort?
 		
+		self.constraint_tree = ConstraintTree(self.all_simplified, list(range(len(self.all_simplified))), self.simplified_constraint_nums)
 		
-		# We can't make a big 15-dimensional array, it would take larger amounts
-		# of memory than I know a name for. And I don't see a convenient sparse
-		# array solution, so I'm going to use a dict with the coordinates as keys.
-		self.constraint_lookup = dict()
-		for i in range(len(self.all_constraints)):
-			c = self.constraint_nums
-			n = list(np.array(self.all_constraints[i])[:,0])
-			n2 = list(np.array(self.all_constraints[i])[:,1])
-			#print(c[0].index(n2[0])-c[0].index(n[0]))
-			key = str([c[0].index(n[0]),c[1].index(n[1]),c[2].index(n[2]),c[3].index(n[3]),c[4].index(n[4]),
-					c[5].index(n[5]),c[6].index(n[6]),c[7].index(n[7]),c[8].index(n[8]),c[9].index(n[9]),
-					c[10].index(n[10]),c[11].index(n[11]),c[12].index(n[12]),c[13].index(n[13]),c[14].index(n[14])])
-			self.constraint_lookup[key] = i
-		
-		print("Done hashing constraints")
+		print("Done constructing constraint tree")
 		print(time.perf_counter()-starttime)
+		
+#		# We can't make a big 15-dimensional array, it would take larger amounts
+#		# of memory than I know a name for. And I don't see a convenient sparse
+#		# array solution, so I'm going to use a dict with the coordinates as keys.
+#		self.constraint_lookup = dict()
+#		for i in range(len(self.all_constraints)):
+#			c = self.constraint_nums
+#			n = list(np.array(self.all_constraints[i])[:,0])
+#			n2 = list(np.array(self.all_constraints[i])[:,1])
+#			#print(c[0].index(n2[0])-c[0].index(n[0]))
+#			key = str([c[0].index(n[0]),c[1].index(n[1]),c[2].index(n[2]),c[3].index(n[3]),c[4].index(n[4]),
+#					c[5].index(n[5]),c[6].index(n[6]),c[7].index(n[7]),c[8].index(n[8]),c[9].index(n[9]),
+#					c[10].index(n[10]),c[11].index(n[11]),c[12].index(n[12]),c[13].index(n[13]),c[14].index(n[14])])
+#			self.constraint_lookup[key] = i
+#
+#		print("Done hashing constraints")
+#		print(time.perf_counter()-starttime)
 		
 		# Choose one chunk to display
 		chunk_num = r.choice(range(len(self.all_blocks)))
@@ -1351,6 +1382,104 @@ class Chunk(MeshInstance):
 
 			permutation = [ordered_str.index(x) for x in [str(pair) for pair in np.array(self.all_constraints[i])]]
 			print(permutation)
+
+class ConstraintTree:
+	"""
+	Stores a hierarchy of sorted constraints, which can then be queried with a 15-dimensional point.
+	The return value, however, is an index into the constraint-set, so this class has to know the
+	overall set intended for indexing.
+	"""
+	sort_dim = 0
+	sort_index = 0
+	sort_threshhold = 0
+	values = []
+	is_leaf = False
+	
+	def __init__(self, constraints, constraint_indices, constraint_nums):
+		"""
+		Takes a set of constraints, along with a set of indices which indicate which constraints will
+		be found on this tree. Constructs a tree for fast lookup of the constraints. Also requires
+		a list, constraint_nums, of the floats which occur in the entire set of constraints.
+		"""
+		self.values = constraint_indices
+		self.all_constraints = constraints
+		self.constraint_nums = constraint_nums
+		if len(constraint_indices) > 1:
+			#print("Sorting "+str(len(constraint_indices))+" constraints.")
+			# Determine the best way to split up the given constraints. For a given plane,
+			# a constraint could fall 'below' it or 'above' it, or could cross through that
+			# plane. Crossing through is bad news since those essentially go both below
+			# and above, meaning they're not eliminated. What we need to optimize, then,
+			# is the product of how many fall below with how many fall above.
+			# TODO - although this should never happen, I should think about how to
+			# handle values exactly on a boundary.
+			
+			below_counts = [[0 for x in dim_nums] for dim_nums in constraint_nums]
+			above_counts = [[0 for x in dim_nums] for dim_nums in constraint_nums]
+			
+			for i in constraint_indices:
+				for dim in range(15):
+					start = list(constraint_nums[dim]).index(constraints[i][dim][0])
+					end = list(constraint_nums[dim]).index(constraints[i][dim][1])
+					# Choices of split up to and including the start number will 
+					# place this constraint in the 'above' category.
+					for j in range(start+1):
+						above_counts[dim][j] += 1
+					# Choices of split >= the end number will place this constraint 'below'
+					for j in range(end,len(constraint_nums[dim])):
+						below_counts[dim][j] += 1
+			# Find maximum and store it in the class
+			for dim in range(15):
+				for num_index in range(len(constraint_nums[dim])):
+					if (below_counts[self.sort_dim][self.sort_index]*above_counts[self.sort_dim][self.sort_index] 
+							< below_counts[dim][num_index]*above_counts[dim][num_index]):
+						self.sort_dim = dim
+						self.sort_index = num_index
+			self.sort_threshhold = constraint_nums[self.sort_dim][self.sort_index]
+			if below_counts[self.sort_dim][self.sort_index]*above_counts[self.sort_dim][self.sort_index] == 0:
+				# The constraint planes are not differentiating between these two. So, we just leave them
+				# both unsorted and declare ourselves a leaf node.
+				# TODO: I could add a test here, which makes sure the constraints are nonoverlapping.
+				# TODO: Lookup would be *slightly* faster if I sorted these somehow.
+				self.is_leaf = True
+			#print(str(below_counts[self.sort_dim][self.sort_index])+" below; "
+			#	+str(above_counts[self.sort_dim][self.sort_index])+" above; "
+			#	+str(len(constraint_indices) - below_counts[self.sort_dim][self.sort_index] 
+			#	- above_counts[self.sort_dim][self.sort_index])+" between.")
+			if not self.is_leaf:
+				# Now we just need to do the actual sorting.
+				# For these purposes, constraints which are both below and above get
+				# handed to *both* child nodes.
+				below = []
+				above = []
+				for i in constraint_indices:
+					start = constraint_nums[self.sort_dim].index(constraints[i][self.sort_dim][0])
+					end = constraint_nums[self.sort_dim].index(constraints[i][self.sort_dim][1])
+					if end > self.sort_index:
+						above.append(i)
+					if start < self.sort_index:
+						below.append(i)
+				self.below = ConstraintTree(constraints, below, constraint_nums)
+				self.above = ConstraintTree(constraints, above, constraint_nums)
+		else:
+			# No need to sort, we're a leaf node
+			self.is_leaf = True
+	
+	def find(self, point):
+		"""
+		Accepts a 3D parallel-space point, as represented by its 15 dot products
+		with normal vectors to a rhombic triacontahedron's faces. Returns a small 
+		list of indices to constraints (as listed in self.all_constraints), one
+		of which will contain the point.
+		"""
+		if self.is_leaf:
+			return self.values
+		if point[self.sort_dim] < self.sort_threshhold:
+			return self.below.find(point)
+		# Should be fine to include points equal to threshhold on either side;
+		# any constraint straddling the threshhold was sent to both.
+		if point[self.sort_dim] >= self.sort_threshhold:
+			return self.above.find(point)
 
 class GoldenField:
 	phi = 1.61803398874989484820458683
