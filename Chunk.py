@@ -250,6 +250,275 @@ class Chunk(MeshInstance):
 		np.save("temp_test_is",inside_bool,allow_pickle=False)
 		np.save("temp_test_os",outside_bool,allow_pickle=False)
 	
+	def simplify_constraints(self, no_new_values = True):
+		"""
+		The original generated constraints in self.all_constraints (as created by
+		numpylattice.py) are very broad in some directions, sometimes spanning most
+		of the space despite the small size of the actual constrained region (ie,
+		other dimensions are doing most of the work). This function moves constraints
+		inwards, closer to the actual region, so that some other processes can be
+		faster.
+		
+		The new constraints are simply placed in self.all_constraints, and 
+		self.constraint_nums is updated accordingly.
+		
+		If no_new_values is True, this function will guarantee that the new 
+		self.constraint_nums is not larger than the old one, at a cost to
+		constraint snugness.
+		"""
+		# We want to simplify the constraints. Many span more than half of one
+		# of their 15 dimensions, but those values aren't actually relevant in
+		# the 3D constraint space
+		# because some of the other dimensions are pinned down to a range of
+		# 1 or 2 constraint_nums values. So we want to see what values are actually
+		# realizable, and collapse these large ranges down.
+		self.all_simplified = []
+		for i in range(len(self.all_constraints)):
+			#print( [self.constraint_nums[dim].index(np.array(self.all_constraints[i])[dim,1]) 
+			#				- self.constraint_nums[dim].index(np.array(self.all_constraints[i])[dim,0]) for dim in range(15)] )
+			# To figure out what's relevant, we acquire a point inside the constraints
+			# and re-base them as distance from that point. (This would have been easier
+			# done when they were first created, since they were originally generated
+			# as relative distance like this.)
+			# (This step adds about 40 seconds)
+			self.seed = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
+			self.make_seed_within_constraints(self.all_constraints[i])
+			translated_constraints = (np.array(self.all_constraints[i]).T - np.array(self.twoface_normals).dot(self.seed.dot(self.normallel.T))).T
+			
+			# Sort all 30 constraints by how distant they are from this point.
+			fields = [('tc',np.float),('index',np.int),('dir',np.int)]
+			aug_tc = ([(np.abs(translated_constraints[j][0]), j, -1) for j in range(15)] 
+					+ [(np.abs(translated_constraints[j][1]), j, 1) for j in range(15)])
+			sorted_tc = np.sort(np.array(aug_tc,dtype=fields),order='tc')
+			"""
+			# Now get an initial box based on the closest constraints.
+			# What we'll be storing is the corners.
+			close1 = sorted_tc[0]['index']
+			close2 = sorted_tc[1]['index']
+			close3 = sorted_tc[2]['index']
+			if close1 == close2:
+				close2 = sorted_tc[2]['index']
+				close3 = sorted_tc[3]['index']
+				if close2 == close3:
+					close3 = sorted_tc[4]['index']
+					if close1 == close3:
+						print("impossible")
+						close3 == sorted_tc[5]['index']
+				if close1 == close3:
+					print("impossible")
+					close3 = sorted_tc[4]['index']
+			if close2 == close3:
+				close3 = sorted_tc[3]['index']
+				if close1 == close3:
+					close3 = sorted_tc[4]['index']
+			corners = []
+			basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
+			attempt_index = 0
+			old_value = close3
+			while np.linalg.det(basis_matrix) == 0 and attempt_index < 30:
+				close3 = sorted_tc[attempt_index]['index']
+				basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
+				attempt_index += 1
+			if attempt_index == 30:
+				close3 = old_value
+				old_value = close2
+				attempt_index = 0
+				while np.linalg.det(basis_matrix) == 0 and attempt_index < 30:
+					close2 = sorted_tc[attempt_index]['index']
+					basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
+					attempt_index += 1
+				if attempt_index == 30:
+					close2 = old_value
+					old_value = close1
+					attemp_index = 0
+					while np.linalg.det(basis_matrix) == 0 and attempt_index < 30:
+						close1 = sorted_tc[attempt_index]['index']
+						basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
+						attempt_index += 1
+					if attempt_index == 30:
+						close1 = old_value
+						print("utter defeat!!!!!!!!!!")
+			#print(basis_matrix)
+			#print(str(close1)+", "+str(close2)+", "+str(close3))
+			# We use both directions of these initial constraints, just to get a complete box.
+			for dirspec in [(0,0,0),(0,0,1),(0,1,0),(0,1,1),(1,0,0),(1,0,1),(1,1,0),(1,1,1)]:
+				# We'll build this up in global space rather than translated.
+				# I'm a little shaky on whether the corner calculation here is right.
+				new_corner = np.linalg.solve(basis_matrix
+								, [self.all_constraints[i][close1][dirspec[0]],self.all_constraints[i][close2][dirspec[1]],
+									self.all_constraints[i][close3][dirspec[2]]] )
+#				new_corner = np.array(self.all_constraints[i][close1][dirspec[0]]*self.twoface_normals[close1])
+#				new_corner = (new_corner 
+#							+ (self.twoface_normals[close2] - self.twoface_normals[close1].dot(self.twoface_normals[close2]))
+#							* (self.all_constraints[i][close2][dirspec[1]] - new_corner.dot(self.twoface_normals[close1]))
+#							/ math.pow(np.linalg.norm(self.twoface_normals[close2] 
+#								- self.twoface_normals[close1].dot(self.twoface_normals[close2])),2) )
+#				new_corner = (new_corner 
+#							+ (self.twoface_normals[close3] - self.twoface_normals[close1].dot(self.twoface_normals[close2]))
+#							* (self.all_constraints[i][close2][dirspec[1]] - new_corner.dot(self.twoface_normals[close1]))
+#							/ math.pow(np.linalg.norm(self.twoface_normals[close2] 
+#								- self.twoface_normals[close1].dot(self.twoface_normals[close2])),2) ) )
+				corners.append(new_corner)
+			"""
+			margin1 = 0.00000000000001
+			margin2 = 0.000000000000011
+			# TODO Generating
+			# all the corners would enable very snug constraints, and speed up the constraint 
+			# search by a bit. (I'm uncertain now whether it's very much.)
+			# One direction might be to store, alongside each corner, information about which
+			# plane intersections generated it. That way, another plane which cuts that corner
+			# off knows which planes to use to generate new corners, and check whether those
+			# corners are really part of the shape.
+			corners = []
+			# We're going to need two small margins to try and avoid floating point errors;
+			# the second one very slightly bigger than the first. These of course limit how
+			# snug our constraints will become. Larger margins also slow down the snugging process.
+			# First we generate all corners between constraint planes.
+			
+			# Choosing the first 6 planes guarantees some intersections.
+			closest_six = set()
+			for cst in sorted_tc:
+				closest_six.add(cst['index'])
+				if len(closest_six) >= 6:
+					break
+			closest_six = list(closest_six)
+			for index_i in range(6):
+				for index_j in range(index_i,6):
+					for index_k in range(index_j,6):
+						plane_i = closest_six[index_i]
+						plane_j = closest_six[index_j]
+						plane_k = closest_six[index_k]
+						basis_matrix = np.array([self.twoface_normals[plane_i],self.twoface_normals[plane_j],self.twoface_normals[plane_k]])
+						# Not all planes work together. (Even if distinct, some never meet in a corner.)
+						if np.linalg.det(basis_matrix) != 0.0:
+							for dirspec in [(0,0,0),(0,0,1),(0,1,0),(0,1,1),(1,0,0),(1,0,1),(1,1,0),(1,1,1)]:
+								new_corner = np.linalg.solve(basis_matrix,
+									[self.all_constraints[i][plane_i][dirspec[0]],self.all_constraints[i][plane_j][dirspec[1]],
+									self.all_constraints[i][plane_k][dirspec[2]]] )
+								corners.append(new_corner)
+			
+			# Then we throw out all corners which fall outside the constraint 
+			# region, leaving only actual corners.
+			# NOTE This has been altered to only use planes in "closest_six"
+			# for its checks, rather than genuinely discarding all exterior points,
+			# which only works if we successfully generated them all.
+			for cst in sorted_tc:
+				if cst['index'] in closest_six:
+					# Get all corners' magnitude along this direction.
+					#print(len(corners))
+					corner_dots = [corner.dot(self.twoface_normals[cst['index']]) for corner in corners]
+
+					if cst['dir'] == 1:
+						if self.all_constraints[i][cst['index']][1] < max(corner_dots):
+							# Constraint plane falls inside corners; we need to 
+							# remove some corners.
+
+							# We need to be careful about floating point error here. Don't delete
+							# corners which are just barely outside.
+							smaller_corners_list = [corners[index] for index in range(len(corners)) 
+													if corner_dots[index] <= self.all_constraints[i][cst['index']][1] + margin1]
+							corners = smaller_corners_list
+					else:
+						# So, this is the case cst['dir'] == -1
+						if self.all_constraints[i][cst['index']][0] > min(corner_dots):
+							# Constraint plane falls inside corners; some corners not relevant.
+
+							smaller_corners_list = [corners[index] for index in range(len(corners)) 
+													if corner_dots[index] >= self.all_constraints[i][cst['index']][0] - margin1]
+							corners = smaller_corners_list
+			
+			# Finally, we snug up all constraints to lie near these corners.
+			snugged = np.array(self.all_constraints[i])
+			for cst in sorted_tc:
+				# Check all corners' magnitude in this direction
+				corner_dots = np.sort([corner.dot(self.twoface_normals[cst['index']]) for corner in corners])
+				
+				# Is the seed inside the corners?
+				seed_dot = self.seed.dot(self.normallel.T).dot(self.twoface_normals[cst['index']])
+				if seed_dot > corner_dots[-1] or seed_dot < corner_dots[0]:
+					print("\t\t\tSEED OUTSIDE ITS BOX")
+					raise Exception("Seed outside its box; "+str(seed_dot)+" not between "+str(corner_dots[0])+" and "+str(corner_dots[-1])+"."
+									+"\n Actual constraint was from "+str(self.all_constraints[i][cst['index']][0])
+									+" to "+str(self.all_constraints[i][cst['index']][1])+".")
+				
+				# Want to use the lowest constraint_num beyond our highest corner.
+				nums = np.array(self.constraint_nums[cst['index']])
+				
+				if cst['dir'] == 1:
+					if self.all_constraints[i][cst['index']][1] > max(corner_dots):
+						if no_new_values:
+							# This direction doesn't affect the overall constraint. Can
+							# we bring it closer?
+							smallest = snugged[cst['index']][1]
+							for f in range(len(nums)):
+								if nums[f] >= max(corner_dots):
+									smallest = nums[f]
+									break
+							snugged[cst['index']][1] = smallest
+						else:
+							# We must be careful about floating point error. If the corner we're
+							# snugging up to lies very slightly inside the constraint region,
+							# we may add a tiny facet.
+							# TODO Certainly this could be a bit cleaner. Perhaps test the corner
+							# to see if we can use its literal value.
+							snugged[cst['index']][1] =min(max(corner_dots) + margin1, self.all_constraints[i][cst['index']][1])
+					else:
+						# This indicates a constraint plane falling inside the
+						# corners, which can't happen if we've chosen the true
+						# corners. If the amount is greater than reasonable
+						# floating point error, something has gone wrong.
+						if self.all_constraints[i][cst['index']][1] - max(corner_dots) > margin2:
+							raise Exception("A corner has been incorrectly included in constraint simplification.")
+				if cst['dir'] == -1:
+					smallest = snugged[cst['index']][0]
+					if self.all_constraints[i][cst['index']][0] < min(corner_dots):
+						if no_new_values:
+							# Search for suitable member of nums
+							for f in range(len(nums)-1,-1,-1):
+									if nums[f] <= min(corner_dots):
+										smallest = nums[f]
+										break
+							snugged[cst['index']][0] = smallest
+						else:
+							# Maximal snugness save cautious margin
+							snugged[cst['index']][0] = max(min(corner_dots) - margin1, self.all_constraints[i][cst['index']][0])
+					else:
+						if self.all_constraints[i][cst['index']][0] - min(corner_dots) < -margin2:
+							raise Exception("A corner has been incorrectly included in constraint simplification.")
+				#smallest = cst['dir']*max(cst['dir']*nums[cst['dir']*nums >= cst['dir']*corner_dots[-1*cst['dir']]])
+					
+				if not self.satisfies_by(self.seed,snugged) > 0:
+					print(str(cst['dir'])+" Seed got excluded")
+					raise Exception(str(cst['dir'])+" Seed got excluded")
+				if (self.all_constraints[i][cst['index']][1] - self.all_constraints[i][cst['index']][0] 
+						< snugged[cst['index']][1] - snugged[cst['index']][0]):
+					print(str(cst['dir'])+"Somehow made constraint wider")
+			self.all_simplified.append(snugged)
+			
+#			print("Simplified comparison:")
+#			print(self.satisfies_by(self.seed,self.all_constraints[i]))
+#			print(self.satisfies_by(self.seed,self.all_simplified[i]))
+		print("Length of simplified constraints:")
+		print(len(self.all_simplified))
+		
+		self.simplified_constraint_nums = [set(),set(),set(),set(),set(),set(),set(),set(),set(),set(),
+									set(),set(),set(),set(),set()]
+		for i in range(len(self.all_simplified)):
+			for j in range(15):
+				self.simplified_constraint_nums[j] = self.simplified_constraint_nums[j].union(set(self.all_simplified[i][j]))
+		for i in range(15):
+			sorted = list(self.simplified_constraint_nums[i])
+			sorted.sort()
+			self.simplified_constraint_nums[i] = sorted
+		print("Number of constraint planes before simplification:")
+		print(sum([len(nums) for nums in self.constraint_nums]))
+		print("Number of constraint planes after simplification:")
+		print(sum([len(nums) for nums in self.simplified_constraint_nums]))
+		print([len(dimnums) for dimnums in self.simplified_constraint_nums])
+		
+		self.all_constraints = self.all_simplified
+		self.constraint_nums = self.simplified_constraint_nums
+	
 	def draw_block_wireframe(self,block,st,multiplier):
 		face_origin = np.floor(block).dot(self.worldplane.T)*multiplier
 		face_tip = np.ceil(block).dot(self.worldplane.T)*multiplier
@@ -916,198 +1185,18 @@ class Chunk(MeshInstance):
 		
 		# Size of constraint_nums in each dimension:
 		# 400, 364, 574, 372, 395, 359, 504, 553, 382, 369, 470, 556, 404, 351, 359
-		
-		# We want to simplify the constraints. Many span more than half of one
-		# of their 15 dimensions, but those values aren't actually realizable
-		# because some of the other dimensions are pinned down to a range of
-		# 1 or 2 constraint_nums values. So we want to see what values are actually
-		# realizable, and collapse these large ranges down, but without adding 
-		# to the size of constraint_nums -- just collapse them to the 
-		# most snug value that's already used somewhere.
-		self.all_simplified = []
-		for i in range(len(self.all_constraints)):
-			#print( [self.constraint_nums[dim].index(np.array(self.all_constraints[i])[dim,1]) 
-			#				- self.constraint_nums[dim].index(np.array(self.all_constraints[i])[dim,0]) for dim in range(15)] )
-			# To figure out what's relevant, we acquire a point inside the constraints
-			# and re-base them as distance from that point. (This would have been easier
-			# done when they were first created, since they were originally generated
-			# as relative distance like this.)
-			# (This step adds about 40 seconds)
-			self.seed = np.array([r.random(),r.random(),r.random(),r.random(),r.random(),r.random()])
-			self.make_seed_within_constraints(self.all_constraints[i])
-			translated_constraints = (np.array(self.all_constraints[i]).T - np.array(self.twoface_normals).dot(self.seed.dot(self.normallel.T))).T
-			
-			# Sort all 30 constraints by how distant they are from this point.
-			fields = [('tc',np.float),('index',np.int),('dir',np.int)]
-			aug_tc = ([(np.abs(translated_constraints[j][0]), j, -1) for j in range(15)] 
-					+ [(np.abs(translated_constraints[j][1]), j, 1) for j in range(15)])
-			sorted_tc = np.sort(np.array(aug_tc,dtype=fields),order='tc')
-			
-			# Now get an initial box based on the closest constraints.
-			# What we'll be storing is the corners.
-			close1 = sorted_tc[0]['index']
-			close2 = sorted_tc[1]['index']
-			close3 = sorted_tc[2]['index']
-			if close1 == close2:
-				close2 = sorted_tc[2]['index']
-				close3 = sorted_tc[3]['index']
-				if close2 == close3:
-					close3 = sorted_tc[4]['index']
-					if close1 == close3:
-						print("impossible")
-						close3 == sorted_tc[5]['index']
-				if close1 == close3:
-					print("impossible")
-					close3 = sorted_tc[4]['index']
-			if close2 == close3:
-				close3 = sorted_tc[3]['index']
-				if close1 == close3:
-					close3 = sorted_tc[4]['index']
-			corners = []
-			basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
-			attempt_index = 0
-			old_value = close3
-			while np.linalg.det(basis_matrix) == 0 and attempt_index < 30:
-				close3 = sorted_tc[attempt_index]['index']
-				basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
-				attempt_index += 1
-			if attempt_index == 30:
-				close3 = old_value
-				old_value = close2
-				attempt_index = 0
-				while np.linalg.det(basis_matrix) == 0 and attempt_index < 30:
-					close2 = sorted_tc[attempt_index]['index']
-					basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
-					attempt_index += 1
-				if attempt_index == 30:
-					close2 = old_value
-					old_value = close1
-					attemp_index = 0
-					while np.linalg.det(basis_matrix) == 0 and attempt_index < 30:
-						close1 = sorted_tc[attempt_index]['index']
-						basis_matrix = np.array([self.twoface_normals[close1],self.twoface_normals[close2],self.twoface_normals[close3]])
-						attempt_index += 1
-					if attempt_index == 30:
-						close1 = old_value
-						print("utter defeat!!!!!!!!!!")
-			#print(basis_matrix)
-			#print(str(close1)+", "+str(close2)+", "+str(close3))
-			# We use both directions of these initial constraints, just to get a complete box.
-			for dirspec in [(0,0,0),(0,0,1),(0,1,0),(0,1,1),(1,0,0),(1,0,1),(1,1,0),(1,1,1)]:
-				# We'll build this up in global space rather than translated.
-				# I'm a little shaky on whether the corner calculation here is right.
-				new_corner = np.linalg.solve(basis_matrix
-								, [self.all_constraints[i][close1][dirspec[0]],self.all_constraints[i][close2][dirspec[1]],
-									self.all_constraints[i][close3][dirspec[2]]] )
-#				new_corner = np.array(self.all_constraints[i][close1][dirspec[0]]*self.twoface_normals[close1])
-#				new_corner = (new_corner 
-#							+ (self.twoface_normals[close2] - self.twoface_normals[close1].dot(self.twoface_normals[close2]))
-#							* (self.all_constraints[i][close2][dirspec[1]] - new_corner.dot(self.twoface_normals[close1]))
-#							/ math.pow(np.linalg.norm(self.twoface_normals[close2] 
-#								- self.twoface_normals[close1].dot(self.twoface_normals[close2])),2) )
-#				new_corner = (new_corner 
-#							+ (self.twoface_normals[close3] - self.twoface_normals[close1].dot(self.twoface_normals[close2]))
-#							* (self.all_constraints[i][close2][dirspec[1]] - new_corner.dot(self.twoface_normals[close1]))
-#							/ math.pow(np.linalg.norm(self.twoface_normals[close2] 
-#								- self.twoface_normals[close1].dot(self.twoface_normals[close2])),2) ) )
-				corners.append(new_corner)
-			
-			
-			# TODO: If I ever want perfect snugness, I'll need to check: does 
-			# this end up different if we find all the (relevant) corners first,
-			# then snug things up? 
-			snugged = np.array(self.all_constraints[i])
-			for cst in sorted_tc:
-				# Check all corners' magnitude in this direction
-				corner_dots = np.sort([corner.dot(self.twoface_normals[cst['index']]) for corner in corners])
-				
-				# Is the seed inside the corners?
-				seed_dot = self.seed.dot(self.normallel.T).dot(self.twoface_normals[cst['index']])
-				if seed_dot > corner_dots[-1] or seed_dot < corner_dots[0]:
-					print("\t\t\tSEED OUTSIDE ITS BOX")
-				
-				# Want to use the lowest constraint_num beyond our highest corner.
-				nums = np.array(self.constraint_nums[cst['index']])
-				
-				if cst['dir'] == 1:
-					if self.all_constraints[i][cst['index']][1] > max(corner_dots):
-						# This direction doesn't affect the overall constraint. Can
-						# we bring it closer?
-						smallest = snugged[cst['index']][1]
-						for f in range(len(nums)):
-							if nums[f] >= max(corner_dots):
-								smallest = nums[f]
-								break
-						snugged[cst['index']][1] = smallest
-					else:
-						# Constraint does affect shape. Add more corners.
-						# Skipping this for now - we merely need a little snugness,
-						# not perfect snugness.
-						pass
-				if cst['dir'] == -1:
-					smallest = snugged[cst['index']][0]
-					if self.all_constraints[i][cst['index']][0] < min(corner_dots):
-						for f in range(len(nums)-1,-1,-1):
-								if nums[f] <= min(corner_dots):
-									smallest = nums[f]
-									break
-					snugged[cst['index']][0] = smallest
-				#smallest = cst['dir']*max(cst['dir']*nums[cst['dir']*nums >= cst['dir']*corner_dots[-1*cst['dir']]])
-					
-				if not self.satisfies_by(self.seed,snugged) > 0:
-					print(str(cst['dir'])+" Seed got excluded")
-				if (self.all_constraints[i][cst['index']][1] - self.all_constraints[i][cst['index']][0] 
-						< snugged[cst['index']][1] - snugged[cst['index']][0]):
-					print(str(cst['dir'])+"Somehow made constraint wider")
-			self.all_simplified.append(snugged)
-			
-#			print("Simplified comparison:")
-#			print(self.satisfies_by(self.seed,self.all_constraints[i]))
-#			print(self.satisfies_by(self.seed,self.all_simplified[i]))
-		print("Length of simplified constraints:")
-		print(len(self.all_simplified))
+		self.simplify_constraints()
 		print(time.perf_counter()-starttime)
 		
-		self.simplified_constraint_nums = [set(),set(),set(),set(),set(),set(),set(),set(),set(),set(),
-									set(),set(),set(),set(),set()]
-		for i in range(len(self.all_simplified)):
-			for j in range(15):
-				self.simplified_constraint_nums[j] = self.simplified_constraint_nums[j].union(set(self.all_simplified[i][j]))
-		for i in range(15):
-			sorted = list(self.simplified_constraint_nums[i])
-			sorted.sort()
-			self.simplified_constraint_nums[i] = sorted
-		print("Number of constraint planes before simplification:")
-		print(sum([len(nums) for nums in self.constraint_nums]))
-		print("Number of constraint planes after simplification:")
-		print(sum([len(nums) for nums in self.simplified_constraint_nums]))
-		print([len(dimnums) for dimnums in self.simplified_constraint_nums])
 		
-		# Now with somewhat more compact constraints, we 
-		# oh no, I thought I wrote down more of the plan here. Was I going to make
-		# a tree of some sort?
+		# Now with somewhat more compact constraints, we can create a decent-speed
+		# lookup tree.
 		
-		self.constraint_tree = ConstraintTree(self.all_simplified, list(range(len(self.all_simplified))), self.simplified_constraint_nums)
+		#self.constraint_tree = ConstraintTree(self.all_simplified, list(range(len(self.all_simplified))), self.simplified_constraint_nums)
+		self.constraint_tree = ConstraintTree(self.all_constraints, list(range(len(self.all_constraints))), self.constraint_nums)
 		
 		print("Done constructing constraint tree")
 		print(time.perf_counter()-starttime)
-		
-#		# We can't make a big 15-dimensional array, it would take larger amounts
-#		# of memory than I know a name for. And I don't see a convenient sparse
-#		# array solution, so I'm going to use a dict with the coordinates as keys.
-#		self.constraint_lookup = dict()
-#		for i in range(len(self.all_constraints)):
-#			c = self.constraint_nums
-#			n = list(np.array(self.all_constraints[i])[:,0])
-#			n2 = list(np.array(self.all_constraints[i])[:,1])
-#			#print(c[0].index(n2[0])-c[0].index(n[0]))
-#			key = str([c[0].index(n[0]),c[1].index(n[1]),c[2].index(n[2]),c[3].index(n[3]),c[4].index(n[4]),
-#					c[5].index(n[5]),c[6].index(n[6]),c[7].index(n[7]),c[8].index(n[8]),c[9].index(n[9]),
-#					c[10].index(n[10]),c[11].index(n[11]),c[12].index(n[12]),c[13].index(n[13]),c[14].index(n[14])])
-#			self.constraint_lookup[key] = i
-#
-#		print("Done hashing constraints")
-#		print(time.perf_counter()-starttime)
 		
 		# Choose one chunk to display
 		chunk_num = r.choice(range(len(self.all_blocks)))
@@ -1189,7 +1278,6 @@ class Chunk(MeshInstance):
 #			#child_strings = set([str(self.generate_children(i,[0,0,0,0,0,0]))])
 #			#possible_children = child_strings.union(possible_children)
 #			print(str(i)+": "+str(len(possible_children)))
-		
 		
 		# Now that "seed" is a valid offset for our chosen chunk, we need to 
 		# determine which superchunk it can fit in.
@@ -1426,6 +1514,10 @@ class ConstraintTree:
 			below_counts = [[0 for x in dim_nums] for dim_nums in constraint_nums]
 			above_counts = [[0 for x in dim_nums] for dim_nums in constraint_nums]
 			
+			# TODO The nested for loops really slow things down if the number of 
+			# constraint_nums goes up, which it does if I try to make constraints more
+			# snug. Would be nice to speed this up so I could comfortably test 
+			# speedups from sharper constraints.
 			for i in constraint_indices:
 				for dim in range(15):
 					start = list(constraint_nums[dim]).index(constraints[i][dim][0])
