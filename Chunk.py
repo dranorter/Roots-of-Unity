@@ -1229,40 +1229,21 @@ class Chunk(MeshInstance):
 			sorted.sort()
 			self.constraint_nums[i] = sorted
 		
-		# Size of constraint_nums in each dimension:
+		# Original, pre-simplification size of constraint_nums in each dimension:
 		# 400, 364, 574, 372, 395, 359, 504, 553, 382, 369, 470, 556, 404, 351, 359
-		self.simplify_constraints()
-		print(time.perf_counter()-starttime)
-		self.simplify_constraints()
-		print(time.perf_counter()-starttime)
-		self.simplify_constraints()
-		print(time.perf_counter()-starttime)
-		self.simplify_constraints()
-		print(time.perf_counter()-starttime)
-		self.simplify_constraints()
-		print(time.perf_counter()-starttime)
-		self.simplify_constraints()
-		print(time.perf_counter()-starttime)
-		self.simplify_constraints()
-		print(time.perf_counter()-starttime)
-		self.simplify_constraints()
-		print(time.perf_counter()-starttime)
-		self.simplify_constraints()
-		print(time.perf_counter()-starttime)
-		self.simplify_constraints()
-		print(time.perf_counter()-starttime)
-		
-		self.save_templates_npy("simplified_constraints")
-		print("Constraints have been saved, you can switch over to that version now.")
-		return
+		# After 20 calls of self.simplify_constraints():
+		# 359, 315, 514, 336, 343, 325, 440, 509, 339, 338, 411, 500, 377, 328, 324
 		
 		# Now with somewhat more compact constraints, we can create a decent-speed
 		# lookup tree.
 		
 		#self.constraint_tree = ConstraintTree(self.all_simplified, list(range(len(self.all_simplified))), self.simplified_constraint_nums)
-		self.constraint_tree = ConstraintTree(self.all_constraints, list(range(len(self.all_constraints))), self.constraint_nums)
-		
-		print("Done constructing constraint tree")
+		#self.constraint_tree = ConstraintTree.sort(self.all_constraints, list(range(len(self.all_constraints))), self.constraint_nums)
+		#self.constraint_tree.save()
+		#print("Tree has been saved!")
+		#print("Done constructing constraint tree")
+		self.constraint_tree = ConstraintTree.load()
+		print("Done loading constraint search tree.")
 		print(time.perf_counter()-starttime)
 		
 		
@@ -1561,17 +1542,24 @@ class ConstraintTree:
 	values = []
 	is_leaf = False
 	
-	def __init__(self, constraints, constraint_indices, constraint_nums):
+	def __init__(self):
+		sort_dim = 0
+		sort_index = 0
+		sort_threshhold = 0
+		values = []
+		is_leaf = False
+	
+	@classmethod
+	def sort(cls, constraints, constraint_indices, constraint_nums):
 		"""
 		Takes a set of constraints, along with a set of indices which indicate which constraints will
 		be found on this tree. Constructs a tree for fast lookup of the constraints. Also requires
 		a list, constraint_nums, of the floats which occur in the entire set of constraints.
 		"""
+		self = cls()
 		self.values = constraint_indices
-		self.all_constraints = constraints
-		self.constraint_nums = constraint_nums
 		if len(constraint_indices) > 1:
-			#print("Sorting "+str(len(constraint_indices))+" constraints.")
+			print("Sorting "+str(len(constraint_indices))+" constraints.")
 			# Determine the best way to split up the given constraints. For a given plane,
 			# a constraint could fall 'below' it or 'above' it, or could cross through that
 			# plane. Crossing through is bad news since those essentially go both below
@@ -1629,11 +1617,12 @@ class ConstraintTree:
 						above.append(i)
 					if start < self.sort_index:
 						below.append(i)
-				self.below = ConstraintTree(constraints, below, constraint_nums)
-				self.above = ConstraintTree(constraints, above, constraint_nums)
+				self.below = ConstraintTree.sort(constraints, below, constraint_nums)
+				self.above = ConstraintTree.sort(constraints, above, constraint_nums)
 		else:
 			# No need to sort, we're a leaf node
 			self.is_leaf = True
+		return self
 	
 	def find(self, point):
 		"""
@@ -1650,6 +1639,53 @@ class ConstraintTree:
 		# any constraint straddling the threshhold was sent to both.
 		if point[self.sort_dim] >= self.sort_threshhold:
 			return self.above.find(point)
+	
+	@classmethod
+	def load(cls, filename="constraint_tree"):
+		fs = File()
+		fs.open("res://"+filename,fs.READ)
+		new_tree = eval(str(fs.get_line()))
+		fs.close()
+		return new_tree
+	
+	def save(self, filename="constraint_tree"):
+		fs = File()
+		fs.open("res://"+filename,fs.WRITE)
+		fs.store_line(repr(self))
+		fs.close()
+	
+	@classmethod
+	def from_dict(cls, description):
+		self = cls()
+		self.is_leaf = description["is_leaf"]
+		if self.is_leaf:
+			self.values = description["values"]
+		else:
+			self.sort_dim = description["sort_dim"]
+			self.sort_index = description["sort_index"]
+			self.sort_threshhold = description["sort_threshhold"]
+			self.below = description["below"]
+			self.above = description["above"]
+			self.values = self.below.values + self.above.values
+		
+		return self
+	
+	def __string__(self):
+		return "{} with {} values".f(self.__class__.__name__,len(self.values))
+	
+	def __repr__(self):
+		# Includes all information except:
+		# - self.all_constraints
+		# - self.constraint_nu
+		if self.is_leaf:
+			# For leaf nodes, we include self.values, and of course no children
+			# or sort parameters
+			return "ConstraintTree.from_dict("+repr({"values":self.values,"is_leaf":self.is_leaf})+")"
+		else:
+			return "ConstraintTree.from_dict("+repr({"sort_dim":self.sort_dim,"sort_index":self.sort_index,
+				"sort_threshhold":self.sort_threshhold,"is_leaf":self.is_leaf,
+				"below":self.below,"above":self.above})+")"
+			
 
 class GoldenField:
 	phi = 1.61803398874989484820458683
