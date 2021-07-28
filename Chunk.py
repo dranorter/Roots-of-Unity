@@ -4,12 +4,13 @@ from godot import *
 import random as r
 import numpy as np
 import numbers, time, math
+from itertools import chain
 from debugging import debugging
 import traceback
 
 COLOR = ResourceLoader.load("res://new_spatialmaterial.tres")
 
-@exposed(tool=True)
+@exposed(tool=False)
 class Chunk(MeshInstance):
 	phi = 1.61803398874989484820458683
 	worldplane = np.array([[phi,0,1,phi,0,-1],[1,phi,0,-1,phi,0],[0,1,phi,0,-1,phi]])
@@ -122,9 +123,6 @@ class Chunk(MeshInstance):
 		[0, 0, 0, 0, 0, 1],
 		[0, 0, 0, 1, 0, 0],
 		[0, 0, 0, 0, 1, 0]
-	]
-	chunk_rot3 = [
-		
 	]
 	
 	def convert_chunklayouts(self,filename="res://chunklayouts_perf_14"):
@@ -270,6 +268,9 @@ class Chunk(MeshInstance):
 			print("Computing booleans..."+str(round(100*i/len(self.all_blocks)))+"%")
 		fs = File()
 		fs.open("res://"+filename,fs.WRITE)
+		# The data can sometimes vary between ndarrays and lists, depending on
+		# what format it was loaded from, whether it was freshly processed/compactified,
+		# etc.
 		if type(self.all_constraints) == type(np.arange(1)):
 			fs.store_line(repr((self.all_constraints.tolist())).replace('\n',''))
 		else:
@@ -434,6 +435,9 @@ class Chunk(MeshInstance):
 #								- self.twoface_normals[close1].dot(self.twoface_normals[close2])),2) ) )
 				corners.append(new_corner)
 			"""
+			# We're going to need two small margins to try and avoid floating point errors;
+			# the second one very slightly bigger than the first. These of course limit how
+			# snug our constraints will become. Larger margins also slow down the snugging process.
 			margin1 = 0.00000000000001
 			margin2 = 0.000000000000011
 			# TODO Generating all the corners would enable very snug
@@ -444,9 +448,6 @@ class Chunk(MeshInstance):
 			# off knows which planes to use to generate new corners, and check whether those
 			# corners are really part of the shape.
 			corners = []
-			# We're going to need two small margins to try and avoid floating point errors;
-			# the second one very slightly bigger than the first. These of course limit how
-			# snug our constraints will become. Larger margins also slow down the snugging process.
 			# First we generate all corners between constraint planes.
 			
 			# Choosing the first 6 planes guarantees some intersections.
@@ -1089,6 +1090,8 @@ class Chunk(MeshInstance):
 		chunks = np.concatenate([np.array(self.all_blocks[i][0]), np.array(self.all_blocks[i][1])])
 		# TODO there are some repeated points here
 		points = np.floor(chunks)
+		if len(points) < 100:
+			raise Exception("Only found "+str(len(points))+" blocks in a chunk template.")
 		
 		chunkscaled_positions = (np.array(self.deflation_face_axes)).dot(np.transpose(points)).T
 		chunkscaled_offset = (np.array(self.deflation_face_axes)).dot(offset)
@@ -1117,7 +1120,7 @@ class Chunk(MeshInstance):
 #		print([child[0] for child in children_[:10]])
 #		print(len(set([child[0] for child in children])))
 #		print(len(set([child[0] for child in children_])))
-		print("done reformatting children")
+
 #		with np.printoptions(edgeitems=150,linewidth=100):
 #			print(is_matches.shape)
 #			print(np.array(np.nonzero(is_matches)).shape)
@@ -1181,24 +1184,23 @@ class Chunk(MeshInstance):
 		that seed at the origin.
 		"""
 		seed_15 = self.twoface_normals.dot(seedvalue.dot(self.normallel.T))
-#		seed_indices = np.zeros(15,dtype=np.int)
-#		for i in range(15):
-#			#TODO A binary search would be faster
-#			for j in range(len(self.constraint_nums[i])):
-#				if self.constraint_nums[i][j] <= seed_15[i]:
-#					seed_indices[i] = j
-#		print(list(self.constraint_lookup.keys())[0])
-#		print()
-#		return self.constraint_lookup[str(list(seed_indices))]
+		
+		# TODO When I add some sort of testing system, there should be a test
+		# here for whether the single-hit cases still pass the self.satisfies
+		# test.
 		# The tree ought to get us 1 to 3 possibilities to sort through.
 		hits = self.constraint_tree.find(seed_15)
-		for hit in hits:
-			# TODO Once I'm somewhat confident this tree works, I could skip the
-			# check here when there is only one hit.
-			# TODO We're using all_constraints instead of all_simplified, though
-			# the two should be the same. Could add a check for whether they are.
-			if self.satisfies(seedvalue, self.all_constraints[hit]):
-				return hit
+		if len(hits) == 1:
+			return hits[0]
+		else:
+			real_hits = []
+			for hit in hits:
+				if self.satisfies(seedvalue, self.all_constraints[hit]):
+					real_hits.append(hit)
+			if len(real_hits) > 1:
+				raise Exception("The problematic assumption was that constraints never overlap.")
+			else:
+				return real_hits[0]
 		raise Exception("No valid hits out of "+str(len(hits))+" hits.")
 	
 	def _ready(self):
@@ -1390,28 +1392,49 @@ class Chunk(MeshInstance):
 			self.mesh.surface_set_material(self.mesh.get_surface_count()-1,COLOR)
 		
 		# Now we draw the blocks inside those chunks.
-#		sanity_test = (np.array(self.deflation_face_axes).T).dot(chunk_axes_inv_seed)
-#		print("Sanity test:")
-#		print(sanity_test)
-#		print(self.seed)
-		# For now we'll draw strictly the "interior" blocks, but
-		# include the "exterior" chunks.
+		
+		#children = chain(*[self.generate_children(i,offset) for i, offset in all_superchunks])
+		# Cleverer line above didn't turn out to be faster.
 		children = []
-		for i, offset in all_superchunks:
-			children += self.generate_children(i, offset)#[(int(l[0]), l[1:]) for l in self.generate_children(i, offset)]
-			print(len(children))
-		print("All blocks now generated. Time:")
+		for i, offset in hits:#all_superchunks:
+			children += self.generate_children(i, offset)
+		# These children are the chunks already drawn above, but now
+		# accompanied by an appropriate offset and template index so we can draw
+		# their blocks. So, test: do the children correspond to the aldready-drawn
+		# chunks?
+#		children2 = []
+#		for i, offset in hits:
+#
+		print("All "+str(len(children))+" chunks now generated. Time:")
 		print(time.perf_counter()-starttime)
 		# Draw these
 		multiplier = 1
 		st = SurfaceTool()
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
 		st.add_color(Color(r.random(),r.random(),r.random()))
-		for i, offset in children:
-			for block in (np.concatenate([self.all_blocks[i][0],self.all_blocks[i][1]]) + offset):
-				if ( block[0] + block[1] + block[2] == 0):# and block[5] in list(np.arange(20)-10.5)):#block.dot(self.normalworld.T).dot(self.normalworld.T[0]) < 5
-					#and block[0] == 0):
-					self.draw_block(block,st,multiplier)
+		
+		# List the block coordinates
+		# (takes about 12 seconds in current test)
+		block_comprehension = list(chain(*[[block for block in np.concatenate([self.all_blocks[i][0],self.all_blocks[i][1]])+offset] 
+									for i, offset in children]))
+		print("All "+str(len(block_comprehension))+" blocks generated. Time:")
+		print(time.perf_counter()-starttime)
+		
+		# Now pass them to the draw function
+		# When no drawing occurs, takes about 21 seconds (for-loop version took 40)
+		# With drawing, takes about 42 seconds
+		def decide(block):
+			#if block[0] + block[1] + block[2] == 0.5:
+				self.draw_block(block,st,multiplier)
+		list(map(decide, block_comprehension))
+		#for block in block_comprehension:
+		#	if block[0] + block[1] + block[2] == 0.5:
+		#		self.draw_block(block,st,multiplier)
+		#for i, offset in children:
+		#	for block in (np.concatenate([self.all_blocks[i][0],self.all_blocks[i][1]]) + offset):
+		#		if ( block[0] + block[1] + block[3] in [0,1,2]):
+		#			self.draw_block(block,st,multiplier)
+		print(time.perf_counter()-starttime)
 		if len(children) > 0:
 			st.generate_normals()
 			st.commit(self.mesh)
