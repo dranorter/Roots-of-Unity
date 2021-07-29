@@ -10,7 +10,7 @@ import traceback
 
 COLOR = ResourceLoader.load("res://new_spatialmaterial.tres")
 
-@exposed(tool=False)
+@exposed(tool=True)
 class Chunk(MeshInstance):
 	phi = 1.61803398874989484820458683
 	worldplane = np.array([[phi,0,1,phi,0,-1],[1,phi,0,-1,phi,0],[0,1,phi,0,-1,phi]])
@@ -1097,9 +1097,14 @@ class Chunk(MeshInstance):
 		chunkscaled_offset = (np.array(self.deflation_face_axes)).dot(offset)
 		chunk_seeds = (current_level_seed - chunkscaled_positions).dot(self.squarallel)
 		
+		# TODO List comprehension inside a for loop; optimize?
+		# TODO find_satisfied doesn't know the chunk orientation we're looking
+		# for, and can find multiple chunks whose origin corners (determined by 
+		# floor() above) are the same. Remove multiples, or better, prevent the
+		# problem by using the original orientation info.
 		for seed_i in range(len(chunk_seeds)):
-			#is_matches.append(self.find_satisfied(chunk_seeds[seed_i]))
-			children.append((self.find_satisfied(chunk_seeds[seed_i]),chunkscaled_positions[seed_i]+chunkscaled_offset))
+			#children.append((self.find_satisfied(chunk_seeds[seed_i]),chunkscaled_positions[seed_i]+chunkscaled_offset))
+			children += [(chunk_index,chunkscaled_positions[seed_i]+chunkscaled_offset) for chunk_index in self.find_satisfied(chunk_seeds[seed_i])]
 		
 		# The below version returns a list of seven numbers, the first of which is the index, and the rest, the coords.
 #		print("over to numpy...")
@@ -1180,8 +1185,8 @@ class Chunk(MeshInstance):
 	
 	def find_satisfied(self, seedvalue):
 		"""
-		Takes a seedvalue and returns a chunk template index which would satisfy
-		that seed at the origin.
+		Takes a seedvalue and returns a list of chunk template indices which 
+		would satisfy that seed at the origin.
 		"""
 		seed_15 = self.twoface_normals.dot(seedvalue.dot(self.normallel.T))
 		
@@ -1190,17 +1195,31 @@ class Chunk(MeshInstance):
 		# test.
 		# The tree ought to get us 1 to 3 possibilities to sort through.
 		hits = self.constraint_tree.find(seed_15)
+		# Hits can be spurious if the seed doesn't happen to be separated
+		# from the constraint region by any of the planes which the tree
+		# made use of. (If the seed is outside of a constraint, there's 
+		# always some plane the tree *could have* tested in order to see this.
+		# But when several constraint regions are separated by no single plane,
+		# the tree won't test every plane.)
+		# TODO If I ever wanted to remove this call to self.satisfies, I could
+		# have the leaf nodes of the tree do some final tests. In principle
+		# the leaf nodes could know which planes haven't been tested yet and
+		# cross their regions, and then use those to determine which 
+		# single template to return. Almost equivalent, but easier on the
+		# lookup tree code, would be cutting up all the constraint regions
+		# so that the overlapping regions are their own separate entries on
+		# the constraints list. I'd have a choice of exactly how to cut 
+		# everything up yet leave the regions convex.
 		if len(hits) == 1:
-			return hits[0]
-		else:
-			real_hits = []
-			for hit in hits:
-				if self.satisfies(seedvalue, self.all_constraints[hit]):
-					real_hits.append(hit)
-			if len(real_hits) > 1:
-				raise Exception("The problematic assumption was that constraints never overlap.")
-			else:
-				return real_hits[0]
+			# If there's just one, the point must be inside it for two reasons.
+			# One, all the bounding constraints got checked. Two, any seed
+			# must be in at least one region.
+			return hits
+		real_hits = []
+		for hit in hits:
+			if self.satisfies(seedvalue, self.all_constraints[hit]):
+				real_hits.append(hit)
+		return real_hits
 		raise Exception("No valid hits out of "+str(len(hits))+" hits.")
 	
 	def _ready(self):
