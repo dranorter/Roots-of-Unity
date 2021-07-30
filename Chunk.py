@@ -10,7 +10,7 @@ import traceback
 
 COLOR = ResourceLoader.load("res://new_spatialmaterial.tres")
 
-@exposed(tool=True)
+@exposed(tool=False)
 class Chunk(MeshInstance):
 	phi = 1.61803398874989484820458683
 	worldplane = np.array([[phi,0,1,phi,0,-1],[1,phi,0,-1,phi,0],[0,1,phi,0,-1,phi]])
@@ -1088,24 +1088,47 @@ class Chunk(MeshInstance):
 		children = []
 		
 		chunks = np.concatenate([np.array(self.all_blocks[i][0]), np.array(self.all_blocks[i][1])])
-		# TODO there are some repeated points here
+		#print("Trying to find "+str(len(chunks))+" children")
+		# Take the floor to get the correct origin point of the chunk for lookup.
 		points = np.floor(chunks)
-		if len(points) < 100:
-			raise Exception("Only found "+str(len(points))+" blocks in a chunk template.")
 		
-		chunkscaled_positions = (np.array(self.deflation_face_axes)).dot(np.transpose(points)).T
+		# Taking the floor produces duplicates - an average of 3 copies per
+		# point. Removing those would be nice for performance, but removing them 
+		# right away is inconvenient because when we get several chunks back
+		# from the self.find_satisfied call below, we wouldn't know how to try
+		# to match them up with the template and discard those not in the "chunks"
+		# list. So we create a lookup table so we only have to do the work once.
+		unique_points = [points[0]]
+		unique_lookup = np.zeros(points[:,0].shape,dtype=int)
+		for chunk_i in range(len(chunks)):
+			identical_points = np.all(np.abs(points - points[chunk_i]) < 0.1,axis=1)
+			if not np.any(identical_points[:chunk_i]):
+				unique_lookup[identical_points] = len(unique_points)
+				unique_points.append(points[chunk_i])
+#		points = np.array(unique_points)
+		
+		chunkscaled_positions = (np.array(self.deflation_face_axes)).dot(np.transpose(unique_points)).T
 		chunkscaled_offset = (np.array(self.deflation_face_axes)).dot(offset)
 		chunk_seeds = (current_level_seed - chunkscaled_positions).dot(self.squarallel)
 		
-		# TODO List comprehension inside a for loop; optimize?
-		# TODO find_satisfied doesn't know the chunk orientation we're looking
-		# for, and can find multiple chunks whose origin corners (determined by 
-		# floor() above) are the same. Remove multiples, or better, prevent the
-		# problem by using the original orientation info.
-		for seed_i in range(len(chunk_seeds)):
+		found_satisfied = [self.find_satisfied(seed) for seed in chunk_seeds]
+		# TODO Nested for loops; optimize?
+		#for seed_i in range(len(chunk_seeds)):
+		for chunk_i in range(len(chunks)):
+			# Index into the computations
+			u_i = unique_lookup[chunk_i]
 			#children.append((self.find_satisfied(chunk_seeds[seed_i]),chunkscaled_positions[seed_i]+chunkscaled_offset))
-			children += [(chunk_index,chunkscaled_positions[seed_i]+chunkscaled_offset) for chunk_index in self.find_satisfied(chunk_seeds[seed_i])]
-		
+			
+			location = chunkscaled_positions[u_i]+chunkscaled_offset
+			for template_index in found_satisfied[u_i]:
+				template_center = self.possible_centers_live[self.possible_centers.index(self.all_chosen_centers[template_index])]
+				if np.all((template_center + chunks[chunk_i]) - np.round(template_center + chunks[chunk_i]) != 0):
+					children.append((template_index,location))
+			
+#			children += [(chunk_index,chunkscaled_positions[seed_i]+chunkscaled_offset) 
+#							for chunk_index in self.find_satisfied(chunk_seeds[seed_i])]
+		#print("Found "+str(len(children)))
+		#print()
 		# The below version returns a list of seven numbers, the first of which is the index, and the rest, the coords.
 #		print("over to numpy...")
 #		is_matches = np.all([
@@ -1415,7 +1438,7 @@ class Chunk(MeshInstance):
 		#children = chain(*[self.generate_children(i,offset) for i, offset in all_superchunks])
 		# Cleverer line above didn't turn out to be faster.
 		children = []
-		for i, offset in hits:#all_superchunks:
+		for i, offset in all_superchunks:#all_superchunks:#hits:
 			children += self.generate_children(i, offset)
 		# These children are the chunks already drawn above, but now
 		# accompanied by an appropriate offset and template index so we can draw
@@ -1443,7 +1466,7 @@ class Chunk(MeshInstance):
 		# When no drawing occurs, takes about 21 seconds (for-loop version took 40)
 		# With drawing, takes about 42 seconds
 		def decide(block):
-			#if block[0] + block[1] + block[2] == 0.5:
+			if block[0] + block[1] + block[2] == 0:
 				self.draw_block(block,st,multiplier)
 		list(map(decide, block_comprehension))
 		#for block in block_comprehension:
