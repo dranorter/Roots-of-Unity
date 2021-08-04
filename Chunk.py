@@ -309,6 +309,7 @@ class Chunk(MeshInstance):
 			self.all_blocks.append((self.blocklist[inside_blocks_bools[i]],self.blocklist[outside_blocks_bools[i]]))
 	
 	def load_templates_repr(self):
+		starttime = time.perf_counter()
 		fs = File()
 		fs.open("res://chunk_layouts.repr",fs.READ)
 		self.all_constraints = eval(str(fs.get_line()))
@@ -1087,7 +1088,9 @@ class Chunk(MeshInstance):
 		
 		children = []
 		
-		chunks = np.concatenate([np.array(self.all_blocks[i][0]), np.array(self.all_blocks[i][1])])
+		# TODO I'm making a major leap of faith here, that the "inside blocks"
+		# are genuinely all we need. It does look fine, though.
+		chunks = np.array(self.all_blocks[i][0])#np.concatenate([np.array(self.all_blocks[i][0]), np.array(self.all_blocks[i][1])])
 		#print("Trying to find "+str(len(chunks))+" children")
 		# Take the floor to get the correct origin point of the chunk for lookup.
 		points = np.floor(chunks)
@@ -1389,6 +1392,16 @@ class Chunk(MeshInstance):
 		print("Got "+str(len(superhits))+" supersuperchunks")
 		print(time.perf_counter()-starttime)
 		
+		#supersuperhits = self.generate_parents(superhits[0][0],superhits[0][1],level=3)
+		#print("Got "+str(len(supersuperhits))+" supersupersuperchunks")
+		#print(time.perf_counter()-starttime)
+		
+		#all_supersuperchunks = []
+		#for i, offset in supersuperhits:
+		#	all_supersuperchunks += self.generate_children(i, offset, level=4)
+		#print("Supersuperchunks total: "+str(len(all_supersuperchunks)))
+		#superhits = all_supersuperchunks
+		
 		all_superchunks = []
 		for i, offset in superhits:
 			all_superchunks += self.generate_children(i,offset,level=3)#[(int(l[0]),l[1:]) for l in self.generate_children(i,offset,level=3)]
@@ -1456,9 +1469,12 @@ class Chunk(MeshInstance):
 		st.add_color(Color(r.random(),r.random(),r.random()))
 		
 		# List the block coordinates
-		# (takes about 12 seconds in current test)
+		# List comp. version faster, but crashes w/ large numbers of blocks.
 		block_comprehension = list(chain(*[[block for block in np.concatenate([self.all_blocks[i][0],self.all_blocks[i][1]])+offset] 
 									for i, offset in children]))
+		#block_comprehension = np.zeros((0,6))
+		#for i, offset in children:
+		#	block_comprehension = np.concatenate([block_comprehension,self.all_blocks[i][0]])
 		print("All "+str(len(block_comprehension))+" blocks generated. Time:")
 		print(time.perf_counter()-starttime)
 		
@@ -1490,6 +1506,7 @@ class Chunk(MeshInstance):
 	
 	
 	def test_templates(self):
+		starttime = time.perf_counter()
 		possible_blocks = set()
 		for blocklayout in self.all_blocks:
 			combined = np.concatenate([blocklayout[0],blocklayout[1]])
