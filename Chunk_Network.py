@@ -1620,11 +1620,12 @@ class Chunk:
 										+ self.offset.dot(self.network.normallel.T)[1]
 										  + child.offset.dot(self.network.normallel.T)[2])
 					# Fill in blocks below the chosen height. In a fancier version we'd smooth between neighboring chunks.
-					child.block_values = (((child.blocks + child.offset).dot(self.network.normalworld.T)[:,1] < -2)
+					child.block_values = (((child.blocks + child.offset).dot(self.network.normalworld.T)[:,1] < -1)
 											* ((child.blocks + child.offset).dot(self.network.normalworld.T)[:,1] > -2.5))#child.heightmap - 20
 		return self.children
 
 	def draw_mesh(self, drawp = lambda x: True):
+		# TODO Generate mesh in separate thread(s), like the pure-gdscript voxel game demo does.
 		st = SurfaceTool()
 		if self.level >= 1:
 			multiplier = self.network.phi_powers[(self.level-1)*3]
@@ -1632,6 +1633,15 @@ class Chunk:
 			multiplier = 1.0/self.network.phi_powers[-((self.level-1)*3)]
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
 		st.add_color(Color(r.random(), r.random(), r.random()))
+
+		body = StaticBody.new()
+		collider = CollisionShape.new()
+		body.add_child(collider)
+		# TODO If I can write a custom collider shape for the Ammann rhombohedra, there may be ways to make it fast.
+		collider.shape = ConcavePolygonShape()
+		collider_face_array = PoolVector3Array()
+
+		drew_something = False
 
 		for block_i in range(len(self.blocks)):
 			block = self.blocks[block_i] + self.offset
@@ -1644,6 +1654,8 @@ class Chunk:
 				# 		# Skip this block
 				# 		print("Skipping a block yay!")
 				# 		continue
+
+				drew_something = True
 
 				face_origin = np.floor(block).dot(self.network.worldplane.T) * multiplier
 				face_tip = np.ceil(block).dot(self.network.worldplane.T) * multiplier
@@ -1709,13 +1721,74 @@ class Chunk:
 				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1)
 				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3 - dir1)
 
-				st.generate_normals()
-				new_mesh = ArrayMesh()
-				new_mi = MeshInstance.new()
-				new_mi.mesh = new_mesh
-				st.commit(new_mesh)
-				new_mesh.surface_set_material(new_mesh.get_surface_count() - 1, COLOR)
-				self.network.add_child(new_mi)
+				# Now create colliders
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1)
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1 + dir2)
+
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1 + dir2)
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2)
+
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2)
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2 + dir3)
+
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2 + dir3)
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3)
+
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3)
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3 + dir1)
+
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3 + dir1)
+				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1)
+
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1 - dir2)
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1)
+
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2)
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1 - dir2)
+
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2 - dir3)
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2)
+
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3)
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2 - dir3)
+
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3 - dir1)
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3)
+
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1)
+				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3 - dir1)
+
+		# Finalize mesh for the chunk
+
+		if drew_something:
+			st.generate_normals()
+			new_mesh = ArrayMesh()
+			new_mi = MeshInstance.new()
+			new_mi.mesh = new_mesh
+			st.commit(new_mesh)
+			new_mesh.surface_set_material(new_mesh.get_surface_count() - 1, COLOR)
+			self.network.add_child(new_mi)
+
+			# Finalize collision shape for the chunk
+			collider.shape.set_faces(collider_face_array)
+			body.collision_layer = 0xFFFFF
+			body.collision_mask = 0xFFFFF
+			new_mi.add_child(body)
+		else:
+			collider.free()
+			body.free()
 
 class GoldenField:
 	phi = 1.61803398874989484820458683

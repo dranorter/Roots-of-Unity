@@ -1,13 +1,15 @@
-[gd_scene load_steps=4 format=2]
+[gd_scene load_steps=5 format=2]
 
 [ext_resource path="res://ChunkLoad.tscn" type="PackedScene" id=1]
 [ext_resource path="res://Player.gd" type="Script" id=2]
+[ext_resource path="res://PlayerView.gd" type="Script" id=3]
 
 [sub_resource type="CapsuleShape" id=1]
 radius = 1.36916
 height = 2.80554
 
 [node name="PlayerView" type="Spatial"]
+script = ExtResource( 3 )
 
 [node name="ChunkLoad" parent="." instance=ExtResource( 1 )]
 transform = Transform( 0.534352, -0.845262, 0, 0.746322, 0.471805, -0.469472, 0.396826, 0.250863, 0.882948, 0, 0, 0 )
