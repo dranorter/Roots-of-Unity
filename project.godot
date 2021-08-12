@@ -15,7 +15,7 @@ _global_script_class_icons={
 [application]
 
 config/name="Roots of Unity"
-run/main_scene="res://ChunkLoad.tscn"
+run/main_scene="res://PlayerView.tscn"
 config/icon="res://icon.png"
 
 [autoload]

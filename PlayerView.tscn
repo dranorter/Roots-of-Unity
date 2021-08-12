@@ -1,0 +1,30 @@
+[gd_scene load_steps=4 format=2]
+
+[ext_resource path="res://ChunkLoad.tscn" type="PackedScene" id=1]
+[ext_resource path="res://Player.gd" type="Script" id=2]
+
+[sub_resource type="CapsuleShape" id=1]
+radius = 1.36916
+height = 2.80554
+
+[node name="PlayerView" type="Spatial"]
+
+[node name="ChunkLoad" parent="." instance=ExtResource( 1 )]
+transform = Transform( 0.534352, -0.845262, 0, 0.746322, 0.471805, -0.469472, 0.396826, 0.250863, 0.882948, 0, 0, 0 )
+
+[node name="Player" type="KinematicBody" parent="."]
+script = ExtResource( 2 )
+
+[node name="Hitbox" type="CollisionShape" parent="Player"]
+transform = Transform( 1, 0, 0, 0, -4.37114e-08, -1, 0, 1, -4.37114e-08, 0, 0, 0 )
+shape = SubResource( 1 )
+
+[node name="Model" type="CSGCylinder" parent="Player"]
+radius = 1.26516
+height = 4.20633
+sides = 32
+
+[node name="Camera" type="Camera" parent="Player"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.47912, -1.3823 )
+current = true
+far = 200.0
