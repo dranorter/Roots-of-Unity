@@ -5,16 +5,24 @@
 [ext_resource path="res://PlayerView.gd" type="Script" id=3]
 
 [sub_resource type="CapsuleShape" id=1]
-radius = 1.36916
-height = 2.80554
+radius = 1.78657
+height = 2.12018
 
 [node name="PlayerView" type="Spatial"]
 script = ExtResource( 3 )
 
 [node name="ChunkLoad" parent="." instance=ExtResource( 1 )]
-transform = Transform( 0.534352, -0.845262, 0, 0.746322, 0.471805, -0.469472, 0.396826, 0.250863, 0.882948, 0, 0, 0 )
+transform = Transform( 0.534352, -0.845262, 0, 0.746322, 0.471805, -0.469472, 0.396826, 0.250863, 0.882948, 0, -153.139, 58.761 )
+
+[node name="CameraBody" type="Spatial" parent="."]
+
+[node name="Camera" type="Camera" parent="CameraBody"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.47912, -1.3823 )
+current = true
+far = 200.0
 
 [node name="Player" type="KinematicBody" parent="."]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0816016, 0, 0 )
 script = ExtResource( 2 )
 
 [node name="Hitbox" type="CollisionShape" parent="Player"]
@@ -26,7 +34,9 @@ radius = 1.26516
 height = 4.20633
 sides = 32
 
-[node name="Camera" type="Camera" parent="Player"]
-transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.47912, -1.3823 )
-current = true
-far = 200.0
+[node name="Feet" type="RayCast" parent="Player"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.224502, 0, 0 )
+enabled = true
+cast_to = Vector3( 0, -6, 0 )
+
+[connection signal="player_moved" from="Player" to="." method="_on_Player_player_moved"]
