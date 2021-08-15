@@ -1043,6 +1043,85 @@ class Chunk_Network(MeshInstance):
 		position = np.array([pos.x,pos.y,pos.z])
 		self.player_pos = position.dot(rotation.T)
 
+	def _update(self):
+		# Manage a sphere (or maybe spheroid) of loaded blocks around the player.
+		# Want to load in just one or a few per update, unload distant ones as the player
+		# moves, stop expanding loaded sphere before its size causes frame or memory issues,
+		# and on top of all that load really distant super-super-chunks to provide low-LOD distant rendering.
+		# To load chunks based on distance, each chunk in a bigger sphere (of superchunks) must already
+		# know its center point. To keep the bigger sphere available, each superchunk in a yet-bigger sphere
+		# (of super-super-chunks) must know its center-point.
+		# Say for sake of argument we have a tiny sphere of blocks, fitting inside one chunk. The sphere of chunks
+		# just needs to be big enough that each chunk inside the sphere of blocks (IE, with blocks filled in) has all
+		# its neighbors exist (IE, without blocks filled in). So when the sphere of blocks falls exactly within one
+		# chunk, there could be just one chunk with loaded blocks, and all its neighbors loaded without their blocks.
+		# Next, to maintain this state as we move, we need any superchunk with loaded chunks to also have all
+		# neighboring superchunks loaded.
+		# Clearly if we proceed like this upwards, we load an infinite number of higher-level chunks. At some point
+		# we're loading way more than we need. A really high-level chunk doesn't need to load any neighbors if the
+		# player is deep within, thousands of blocks from any face of the chunk.
+		# Actually I think it's all very simple. There is a sphere around the player, and we need to generate all
+		# blocks within that sphere. This means we need to generate all chunks which might contain blocks within the
+		# sphere - which we can simplify to, all chunks with any overlap with the sphere. And to ensure we do that, we
+		# generate all superchunks with any overlap with the sphere. We proceed upwards like this until the sphere
+		# is strictly contained in some higher-level chunk.
+		# There are three problems with that which need addressed.
+		# One, what if this never terminates? Couldn't we be on a chunk corner which is also a superchunk corner which
+		# is also a super-super-chunk corner, and so on ad infinitum? In the cube case I avoided this issue by
+		# selecting an origin for the player to start out at, where they're in the middle of a chunk which is in the
+		# middle of a superchunk which is in the middle of a super-super-chunk, and so on and so on ad infinitum. This
+		# way, the player is infinitely far from any points with that problem. But on the aperiodic grid, I'm actually
+		# starting the player off at a random point, so how can I be sure? Well, every higher level of chunk corners
+		# actually represents 6D lattice points which are an order of magnitude closer to the world-plane. So a point
+		# could be extremely close and remain an intersection for quite a while, but eventually there will be some
+		# level of chunk where it's excluded. This means that chunk corners are guaranteed get further and further away
+		# if we go up enough levels. Since the seed is chosen to be non-singular, no 6D point lies exactly on the world.
+		# Second, blocks cross chunk boundaries! So the loading sphere could be entirely contained within some
+		# super-chunk, yet it might intersect a chunk which belongs to some neighbor super-chunk. This could be addressed
+		# directly by using the actual ownership boundary of each chunk (but just based on direct sub-chunks) instead
+		# of the rhombohedral boundary. An alternative would be to determine some distance from the boundary and
+		# simply assume that points closer than that might be intersecting a neighbor. This effectively means the sphere
+		# gets bigger at each stage, yet my instinct is that it would be OK. Finally, the way I've calculated chunk
+		# templates, each one actually knows positions of any neighboring blocks which reach inside the template. So
+		# a chunk can just check whether neighboring sub-chunks intersect the sphere, and then load in the corresponding
+		# neighboring chunk.
+		# Third, checking for actual overlap with a sphere may be expensive, even if we're just doing it with
+		# rhombohedra rather than a sub-chunk outline. One solution might be to, again, increase the size of the sphere
+		# at each stage, just enough so that we can switch to a check for intersecting corners rather than arbitrary
+		# intersection. So at each level we'd start with the original sphere, then consider the worst-case placement of
+		# that sphere tangent to a golden rhombus of the current chunk scale, and increase the radius just enough that
+		# it would contain the rhombus' corners in such a case. Would the process ever stop making superchunks? I think
+		# it would, but it would produce many more levels of superchunk than necessary. Better to just write a nice
+		# sphere intersection test.
+		# Finally, we shouldn't just expand such a sphere until we flirt with memory and rendering limits. The
+		# dropoff in detail after the sphere is exited is too harsh. Ideally what we want is for parts of the world
+		# which the player can actually see to become more detailed, without too much switching back and forth as to
+		# what is and isn't loaded, and with fairly even coverage.
+
+		# For now, we use a loading radius, which cautiously expands.
+
+
+		# Is the player contained in a fully generated chunk?
+		#	# If not, generating that chunk is enough for this frame; do it and return.
+		#   # But first, reduce the loading_radius since it obviously failed.
+
+		# Starting at the top-level chunk:
+		# (These checks might not be expensive but maybe we could start lower sometimes)
+		#	# Does this chunk fully contain the sphere? That is, does the sphere fall within 'safe' inner margins,
+		#	# where neighbor chunks won't intrude?
+		#	#	# If yes, do procedure 'alpha':
+		#	#	#  Identify all sub-chunks which overlap the sphere.
+		#	#	#  Is any of them not subdivided into sub-sub-chunks?
+		#	#	#	# If yes, do procedure 'add and prune':
+		#	#	#	#	# Are we at the limit of number of loaded chunks?
+		#	#	#	#	#	# If yes, identify a low-priority chunk to unload.
+		#	#	#	#	# Generate children for the identified chunk.
+		#	#	#	# If no, repeat proceduce alpha on each sub-chunk.
+		#	#	# If no: do any neighbor sub-chunks (from the outer part of our template) overlap the sphere?
+		#	#	#	# If yes, add a new top-level chunk, and re-start the process there.
+		#	#	#	# If no, we do fully contain it. Do procedure 'alhpa' above.
+		pass
+
 	def _ready(self):
 		starttime = time.perf_counter()
 
