@@ -19,7 +19,13 @@ transform = Transform( 0.534352, -0.845262, 0, 0.746322, 0.471805, -0.469472, 0.
 [node name="Camera" type="Camera" parent="CameraBody"]
 transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.47912, -1.3823 )
 current = true
-far = 200.0
+size = 4.6
+near = 1.0
+far = 600.0
+
+[node name="grab" type="RayCast" parent="CameraBody/Camera"]
+enabled = true
+cast_to = Vector3( 0, 0, -2 )
 
 [node name="Player" type="KinematicBody" parent="."]
 transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0816016, 0, 0 )
@@ -35,7 +41,7 @@ height = 4.20633
 sides = 32
 
 [node name="Feet" type="RayCast" parent="Player"]
-transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.224502, 0, 0 )
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0711723, 0, 0 )
 enabled = true
 cast_to = Vector3( 0, -6, 0 )
 

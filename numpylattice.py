@@ -247,11 +247,12 @@ class numpylattice(MeshInstance):
 		multiplier = 4
 		
 		# TODO Ending up with overlap between inside_blocks and neighbor_blocks,
-		# which was supposed to have been ruled out by using block_center_in_chunk
-		# and 1 - block_center_in_chunk. Could there be duplicate blocks in our
-		# "blocks" list?? How would one copy end up inside, the other outside?
+		#  which was supposed to have been ruled out by using block_center_in_chunk
+		#  and 1 - block_center_in_chunk. Could there be duplicate blocks in our
+		#  "blocks" list?? How would one copy end up inside, the other outside?
 		neighbor_blocks = []
 		inside_blocks = []
+		# TODO The matrix inverses should be pre-computed for each orientation.
 		axes_matrix = np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
 									*(phi*phi*phi*multiplier) )
 		worldplane_chunk_center = (chosen_center).dot(worldplane.T)*multiplier
@@ -261,8 +262,8 @@ class numpylattice(MeshInstance):
 			inside_blocks.append(blocks[i])
 		
 		# TODO Each corner is being checked many times, once for 
-		# each neighboring block. Also maybe I could remove
-		# " * multiplier" everywhere.
+		#  each neighboring block. Also maybe I could remove
+		#  " * multiplier" everywhere.
 		face_origins = np.floor(blocks).dot(worldplane.T)*multiplier
 		face_tips = np.ceil(blocks).dot(worldplane.T)*multiplier
 		dirNs = np.eye(6)[np.nonzero(np.ceil(blocks)-np.floor(blocks))[1].reshape((-1,3))].dot(worldplane.T)*multiplier
@@ -708,6 +709,7 @@ class numpylattice(MeshInstance):
 				face_origin, face_tip, face_origin + dir1, face_origin + dir2, face_origin + dir3,
 				face_tip - dir1, face_tip - dir2, face_tip - dir3
 			)
+			# TODO Matrix inverses should be pre-computed for each orientation, and, this membership test should be in a function.
 			if np.any(np.abs((np.array(block).dot(worldplane.T)*multiplier - (chosen_center).dot(worldplane.T)*multiplier)
 								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
 								*(phi*phi*phi*multiplier) ))) > 0.5) and np.any(np.all(np.abs((np.array([
@@ -751,6 +753,7 @@ class numpylattice(MeshInstance):
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
 		st.add_color(Color(0,1,1))
 		for block in blocks:
+			# TODO Matrix inverses should be pre-computed for each orientation, and, this membership test should be in a function.
 			if np.all(np.abs((np.array(block).dot(worldplane.T)*multiplier - (chosen_center)
 								.dot(worldplane.T)*multiplier)
 								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
@@ -828,6 +831,8 @@ class numpylattice(MeshInstance):
 				point2 = point1 + offset
 				point1 *= multiplier#*(-phi*phi*phi)
 				point2 *= multiplier#*(-phi*phi*phi)
+				# TODO Matrix inverses should be pre-computed for each orientation, and, this membership test should be in a function.
+				# TODO Also why do I constistently use worldplane instead of normalworld for this?
 				if np.all(np.abs((np.array([point1,point2]) - (chosen_center).dot(worldplane.T)*multiplier)
 								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
 								*(phi*phi*phi*multiplier) ))) < 0.501):
@@ -850,6 +855,7 @@ class numpylattice(MeshInstance):
 		# order to catch points nearby. Adding too many constraints doesn't seem
 		# like it will do much harm - I will just end up with multiple identical
 		# chunk templates. I can "glue together" the constraint regions.
+		# TODO Matrix inverses should be pre-computed for each orientation
 		relevance = np.all(np.abs((embedding_space[included].dot(worldplane.T)*multiplier 
 								- (chosen_center).dot(worldplane.T)*multiplier)
 								.dot(np.linalg.inv(worldplane.T[np.nonzero(chosen_axes)[0]]
