@@ -45,7 +45,7 @@ func _physics_process(delta):
 	# When not in "grabbing range" of a surface, velocity is not reset.
 	# Just clamp it (air friction).
 	if not traction:
-		velocity = Vector3(clamp(velocity.x,-4,4),clamp(velocity.y,-4,4),clamp(velocity.z,-4,4))
+		velocity = Vector3(clamp(velocity.x,-4,4),clamp(velocity.y,0,0),clamp(velocity.z,-4,4))
 	else:
 		# When we are in "grabbing range", velocity is damped, and controls respond.
 		#velocity = velocity*pow(0.1,15*delta)
@@ -68,13 +68,13 @@ func _physics_process(delta):
 			# We move the direction the player is looking
 			velocity -= 10*camera.global_transform.basis[2]
 			input_moved = true
-		if Input.is_action_pressed("ui_page_up"):
-			velocity += 10*transform.basis[1]
-			input_moved = true
-		if Input.is_action_pressed("ui_page_down"):
-			velocity -= 10*transform.basis[1]
-			input_moved = true
-	
+	if Input.is_action_pressed("ui_page_up"):
+		velocity += 10*transform.basis[1]
+		input_moved = true
+	if Input.is_action_pressed("ui_page_down"):
+		velocity -= 10*transform.basis[1]
+		input_moved = true
+
 	# Use two movement types to manage gravity better
 	move_and_slide(Vector3(velocity.x, 0, velocity.z))
 	move_and_collide(Vector3(0,velocity.y,0))

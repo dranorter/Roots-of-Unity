@@ -104,12 +104,44 @@ class Chunk_Network(MeshInstance):
 						'[ 2.   2.   0.5 -0.5  2.  -0.5]', '[2.  2.  2.  0.5 0.5 0.5]']
 
 	player_pos = np.zeros((3,))
+	player_guess = None
+	block_highlight = ImmediateGeometry.new()
 
 	def phipow(self, n):
 		if n >= 0:
 			return self.phi_powers[n]
 		if n < 0:
 			return 1.0/self.phi_powers[-n]
+
+	def custom_pow(self, matrix, power, safe_amount=7):
+		"""
+		A safe method for taking positive and negative powers of integer matrices without getting floating point errors.
+		When the power is negative, a positive power is taken first before inverting (the opposite of numpy). When the
+		power's absolute value is outside the safe_amount,
+		:param matrix: The (square) matrix to be exponentiated. Will be converted to numpy array, dtype=int.
+		:param power: The exponent, which should be integer.
+		:param safe_amount: Amount to exponentiate at once. Default was obtained via testing; 8 seems fine but went with
+		 a default of 7. Higher values, perhaps 10 to 12, are fine if exponents will be positive. Higher values will
+		 make performance better if very large exponents are being used.
+		:return: A numpy matrix, the power of the input matrix.
+		"""
+		exponent_increment = safe_amount
+		remaining_levels = power
+		product = np.eye(len(matrix), dtype=int)
+		trustworthy_portion = np.array(
+			np.round(np.linalg.inv(np.linalg.matrix_power(np.array(matrix, dtype=int), exponent_increment))), dtype=int)
+		while remaining_levels < -exponent_increment:
+			product = np.array(np.round(product.dot(trustworthy_portion)), dtype=int)
+			remaining_levels += exponent_increment
+		trustworthy_portion = np.array(
+			np.round(np.linalg.matrix_power(np.array(matrix, dtype=int), exponent_increment)), dtype=int)
+		while remaining_levels > exponent_increment:
+			product = np.array(np.round(product.dot(trustworthy_portion)), dtype=int)
+			remaining_levels -= exponent_increment
+		remaining_part = np.linalg.matrix_power(np.array(matrix, dtype=int), abs(remaining_levels))
+		if remaining_levels < 0:
+			remaining_part = np.array(np.round(np.linalg.inv(remaining_part)), dtype=int)
+		return np.array(np.round(product.dot(remaining_part)), dtype=int)
 
 	def convert_chunklayouts(self, filename="res://chunklayouts_perf_14"):
 		"""
@@ -753,11 +785,19 @@ class Chunk_Network(MeshInstance):
 		# seed is what needs to be tested against the new constraints, or vice
 		# versa.
 
-		# Raising the matrix to the power -level, we get the inverse of the
-		# matrix raised to the power.
-		chunk_axes_inv = np.linalg.matrix_power(np.array(self.deflation_face_axes).T, -level)
+		# We need to calculate the chunk axes inverse carefully. When Numpy takes a matrix inverse, it makes it
+		# out of floats, and floating point error turns it into junk at around the 13th or 14th power (IE, chunks of
+		# level 13 or 14).
+		# What we'd like is this simple line:
+		#chunk_axes_inv = np.round(np.linalg.matrix_power(np.array(self.deflation_face_axes,dtype=int).T, -level))
 
-		chunk_axes_inv_seed = chunk_axes_inv.dot((self.seed).dot(self.squarallel))
+		# But we'll break it into smaller steps:
+		# TODO The below method creates a hang of about a second if chunk level gets near 1 million. If I pre-calculate
+		#  just a few powers of deflation_face_axes, e.g. 10, 100, 1000, 10,000, etc, these very rare hiccups could
+		#  be avoided.
+		def_face_matrix = np.array(self.deflation_face_axes,dtype=int).T
+		# Testing has shown problems cropping up when below increment is equal to 9. Using 7 for safety margin.
+		chunk_axes_inv = self.custom_pow(def_face_matrix, -level, safe_amount=7)
 
 		# Does this seed fall within our constraint region?
 		# Seeds are equivalent under integer addition and subtration, but
@@ -786,11 +826,6 @@ class Chunk_Network(MeshInstance):
 		# The "rescaling" transformation above, combined with all the translations
 		# of the seed occurring in the search below, check the seed absolutely
 		# for presence of the specific blocks in the templates.
-		print(str(np.any([np.all(self.twoface_normals.dot(chunk_axes_inv_seed.dot(self.normallel.T))
-								 >= self.center_guarantee[chunk][:, 0])
-						  and np.all(self.twoface_normals.dot(chunk_axes_inv_seed.dot(self.normallel.T))
-									 <= self.center_guarantee[chunk][:, 1])
-						  for chunk in self.possible_centers])))
 
 		# Nonetheless: successive applications of the chunk transformation make
 		# our seed further and further from the origin. What's happening can be
@@ -811,14 +846,24 @@ class Chunk_Network(MeshInstance):
 		# is accumulated.
 
 		# TODO figure out what the best way of minimizing floating point error is.
+		#  - I found it was important to do the dot products before the addition (in calculating safer_seed), since
+		#    lowered_offset can be a very large number and the seed is a small one; the dot product brings them
+		#    into something like a shared range. Especially important since their difference, safer_seed, is supposed
+		#    to be quite tiny.
+		#  - I found that much floating point error was being created by the matrix power, used to calculate chunk_axes_inv.
+		#    So I wrote my own matrix power function, which has been somewhat carefully tested.
 		# For now I'll start with a point we know is on the lattice at the right
 		# level - namely the "offset" we're handed - and transform the seed in
 		# one step.
 
 		# "offset" starts out at the level "level", and the seed starts out at
 		# level 1, so we want to apply deflation_face_axes level-1 times.
-		lowered_offset = np.linalg.matrix_power(np.array(self.deflation_face_axes), (level - 1)).dot(offset)
-		safer_seed = (self.seed - lowered_offset).dot(self.squarallel)
+		#lowered_offset = np.linalg.matrix_power(np.array(self.deflation_face_axes,dtype=int), (level - 1)).dot(np.round(offset))
+		lowered_offset = np.array(np.round(offset),dtype=int).dot(self.custom_pow(def_face_matrix,level - 1))
+		# To reduce floating point error, we separately dot "seed" and "lowered_offset" with squarallel, then subtract.
+		# But, "seed" doesn't actually need projected, it's already been.
+		# (Encountered pretty big floating point errors around 1e-9, or, level-13 chunks.)
+		safer_seed = self.seed - lowered_offset.dot(self.squarallel)
 		chunk_axes_inv_seed = chunk_axes_inv.dot(safer_seed)
 		print("Calculating seed from safe point " + str(lowered_offset))
 		print("Translated seed (should be < " + str(round(math.pow(1 / 4.7, level), 2)) + "):" + str(safer_seed))
@@ -985,10 +1030,14 @@ class Chunk_Network(MeshInstance):
 				unique_points.append(points[chunk_i])
 		#		points = np.array(unique_points)
 
-		chunkscaled_positions = (np.array(self.deflation_face_axes)).dot(np.transpose(unique_points)).T
-		chunkscaled_offset = (np.array(self.deflation_face_axes)).dot(offset)
-		chunk_seeds = (current_level_seed - chunkscaled_positions).dot(self.squarallel)
+		chunkscaled_positions = np.array(self.deflation_face_axes,dtype=int).dot(np.transpose(unique_points)).T
+		chunkscaled_offset = np.array(self.deflation_face_axes,dtype=int).dot(offset)
+		# Dot product and then subtract *might* reduce overall floating point error.
+		chunk_seeds = current_level_seed.dot(self.squarallel) - chunkscaled_positions.dot(self.squarallel)
 
+		# TODO Occasionally the below line leads to an error, with no valid chunks in one of the find_satisfied calls. Why?
+		#  May be this only happens when generating children of fairly high-level chunk (say, 13 or so). There's floating
+		#  point error right now plaguing those chunks' offset values.
 		found_satisfied = [self.find_satisfied(seed) for seed in chunk_seeds]
 		# TODO Nested for loops; optimize?
 		# for seed_i in range(len(chunk_seeds)):
@@ -1042,17 +1091,23 @@ class Chunk_Network(MeshInstance):
 				real_hits.append(hit)
 		if len(real_hits) > 0:
 			return real_hits
-		raise Exception("No valid hits out of " + str(len(hits)) + " hits.")
+		raise Exception("No valid hits out of " + str(len(hits)) + " hits."
+						+ "\n Distances from validity:\n"
+						+ str([self.satisfies_by(seedvalue, self.all_constraints[i]) for i in hits]))
 
 	def update_player_pos(self, pos, transform):
 		trans_inv = transform.basis.inverse()
-		rotation = np.array([[trans_inv.x.x,trans_inv.x.y,trans_inv.x.z],
-							 [trans_inv.y.x,trans_inv.y.y,trans_inv.y.z],
-							 [trans_inv.z.x,trans_inv.z.y,trans_inv.z.z]])
+		rotation = np.array([[transform.basis.x.x,transform.basis.x.y,transform.basis.x.z],
+							 [transform.basis.y.x,transform.basis.y.y,transform.basis.y.z],
+							 [transform.basis.z.x,transform.basis.z.y,transform.basis.z.z]])
+		rotation_inv = np.array([[trans_inv.x.x, trans_inv.x.y, trans_inv.x.z],
+							 [trans_inv.y.x, trans_inv.y.y, trans_inv.y.z],
+							 [trans_inv.z.x, trans_inv.z.y, trans_inv.z.z]])
 		position = np.array([pos.x,pos.y,pos.z])
-		self.player_pos = position.dot(rotation.T)
+		translation = np.array([transform.origin.x, transform.origin.y, transform.origin.z])
+		self.player_pos = position + translation
 
-	def chunk_at_location(self, target, target_level=0, generate=False):
+	def chunk_at_location(self, target, target_level=0, generate=False, verbose=False):
 		"""
 		Takes a 3D coordinate and returns the smallest list of already-generated chunks guaranteed to contain that coordinate.
 		The search proceeds from the top-level chunk down; if you want to include a guess, call the Chunk.chunk_at_location
@@ -1070,8 +1125,10 @@ class Chunk_Network(MeshInstance):
 		enough to produce the requested level 10 chunk.
 		:return: A list of chunks. If target_level < 0, these will be placeholder chunks which represent blocks or sub-blocks.
 		"""
-		# Not implemented yet. Placeholder behavior:
-		return self.highest_chunk.chunk_at_location(target, target_level, generate)
+		if self.player_guess is None:
+			return self.highest_chunk.chunk_at_location(target, target_level, generate, verbose)
+		else:
+			return self.player_guess.chunk_at_location(target, target_level, generate, verbose)
 
 	def _process(self, delta):
 		# Manage a sphere (or maybe spheroid) of loaded blocks around the player.
@@ -1130,18 +1187,36 @@ class Chunk_Network(MeshInstance):
 
 		# For now, we use a loading radius, which cautiously expands.
 
-
+		self.block_highlight.clear()
+		#self.block_highlight.set_color(Color(.1,.1,.1))
 		# Is the player contained in a fully generated chunk?
 		closest_chunks = self.chunk_at_location(self.player_pos)
-		print(str(len(closest_chunks))+" results from search for player.")
+		if len(closest_chunks) != 1 or closest_chunks[0].level != 0:
+			print(str(len(closest_chunks))+" results from search for player. Level: "+str(min([c.level for c in closest_chunks]+[0])))
 		for closest_chunk in closest_chunks:
+			self.player_guess = closest_chunk
+			closest_chunk.highlight_block()
+			closest_chunk.get_parent().highlight_block()
+			closest_chunk.get_parent().get_parent().highlight_block()
+			self.block_highlight.show()
+			if not closest_chunk.drawn:
+				closest_chunk.draw_mesh()
 			if closest_chunk.level > 1 or (closest_chunk.level == 1 and not closest_chunk.all_children_generated):
 				# If not, generating that chunk is enough for this frame; do it and return.
 				# But first, reduce the loading_radius since it obviously failed.
-				print("Search found chunk of level "+str(closest_chunk.level)+". "+str(closest_chunk.all_children_generated))
-				print("You need some ground to stand on! Trying to draw it in")
-				closest_chunk.chunk_at_location(self.player_pos, target_level = 0, generate = True)
+				print("Search found chunk of level "+str(closest_chunk.level)+". Children generated? "+str(closest_chunk.all_children_generated))
+				# TODO It would be nice for testing to be able to discover whether anything new generates when generate=True.
+				#print("You need some ground to stand on! Trying to draw it in")
+				new_ground = closest_chunk.chunk_at_location(self.player_pos, target_level=0, generate=True)
+				if closest_chunk in new_ground:
+					print("Got same chunk back. Children generated? "+str(closest_chunk.all_children_generated))
+					print("Did the search go exactly the same way? "+str(new_ground == closest_chunks))
 				return
+		if len(closest_chunks) == 0:
+			print("\n\tBroader chunk tree needed! Generating...\t")
+			closest_chunks = self.chunk_at_location(self.player_pos, target_level=0, generate=True, verbose=True)
+			print("\n\tBroadening resulted in "+str(len(closest_chunks))+" search results.\n")
+			return
 
 		# Starting at the top-level chunk:
 		# (These checks might not be expensive but maybe we could start lower sometimes)
@@ -1417,8 +1492,9 @@ class Chunk_Network(MeshInstance):
 		#	for block in (np.concatenate([self.all_blocks[i][0],self.all_blocks[i][1]]) + offset):
 		#		if ( block[0] + block[1] + block[3] in [0,1,2]):
 		#			self.draw_block(block,st,multiplier)
-		for c in children:
-			c.draw_mesh()
+
+		#for c in children:
+		#	c.draw_mesh()
 		print("Done calling draw. Time:")
 		print(time.perf_counter() - starttime)
 		# if len(children) > 0:
@@ -1757,6 +1833,10 @@ class Chunk:
 		self.parent = None
 		self.children = None
 		self.all_children_generated = False
+		if level == 0: self.all_children_generated = True
+		self.drawn = False
+		self.mesh = None
+		self.collision_mesh = None
 
 	def get_parent(self):
 		if self.parent is None:
@@ -1804,8 +1884,12 @@ class Chunk:
 					#if np.any(child.block_values):
 					#	child.block_values[:] = True
 			# If this is a level 1 chunk, we need to draw the blocks in.
-			if self.level == 1:
-				print("Ah, let's draw these in")
+			if self.level == 2:
+				#print("Ah, let's draw these in")
+				for child in self.children:
+					if not child.drawn:
+						child.draw_mesh()
+			if self.level == 1 and not self.drawn:
 				self.draw_mesh()
 		return self.children
 
@@ -1912,7 +1996,21 @@ class Chunk:
 		# that rhomb could be almost halfway inside the chunk. It turns out that with side length equal to one, a
 		# prolate rhomb has a diagonal of sqrt((1/100.0)*(56*sqrt(5)+156)).
 		# Changed from theoretical value 0.1979 to value 0.1420 below based on brute force examination of templates
-		return self.rhomb_contains_point(point) > 0.14199511391282338
+		# TODO Value of 0.14199511391282338 was not completely reliable; parent would 'safely contain' target but
+		#  children may not contain it. As far as I've observed, the closest child has always been very close to target,
+		#  for example 0.030, 0.042 or 0.048 away from bounding rhomb. Observed at levels 1 and 2 of search. For now,
+		#  I'm changing the value here back to theoretical, but I'd like to figure out why my brute force measurement
+		#  was wrong.
+		# More apparent exceptions: 0.2504585925389473, 0.2563185433459001, 0.2559212731069851, 0.2060401723750226,
+		# 0.25458511670379114. 0.27080803857963665, 0.27049171239589354,
+		# The following values are apparently caused by missing level 6 chunks below a level 7 chunk; values were
+		# reported as the player traveled through the level 7 chunk, quite obviously inside it the entire time. So,
+		# at least some of the problem is caused by this. 0 . 3 3 9 2 4 3 1 6 5 2 6 0 7 2 2 0 7, 0 . 3 3 9 2 4 5 7 3 6 5 9 9 6 4 8 1
+		# 0 . 3 3 9 2 4 8 3 0 7 9 3 8 5 7 3 9 7,  0 . 3 3 9 4 5 2 7 2 9 3 8 3 1 9 0 5, 0 . 3 3 9 4 5 5 3 0 0 7 2 2 1 1 6 4,  0 . 3 3 9 4 9 0 6 5 6 6 3 2 3 4 8 8, 0 . 3 3 9 4 9 5 7 9 9 3 1 0 2 0 0 8,
+		# 0 . 3 3 9 5 0 5 4 4 1 8 3 1 1 7 3 3 7, 0 . 3 3 9 5 0 8 0 1 3 1 7 0 0 9 9 4, 0 . 3 3 9 6 9 5 7 2 0 9 1 1 6 9 6 8 6, 0 . 3 3 9 6 9 8 2 9 2 2 5 0 6 2 2 8 7, 0 . 3 3 9 7 0 0 8 6 3 5 8 9 5 4 8 9,
+		# 0 . 3 3 9 9 7 7 1 6 9 6 5 3 0 1 1 8 3, 0 . 3 3 9 9 7 9 7 3 9 0 8 6 9 4 0 5 7, 0 . 3 4 0 0 3 1 7 7 0 1 2 3 9 9 9 6 5
+		# Using a more cautious, less principled value for now.....
+		return self.rhomb_contains_point(point) > 0.271#0.19793839129906832
 
 	def might_contain_point(self, point, block_level = 0):
 		"""
@@ -1926,9 +2024,11 @@ class Chunk:
 		if self.level <= block_level:
 			return self.rhomb_contains_point(point) > 0
 		# For now, just using the same quick test as safely_contains_point.
-		return self.rhomb_contains_point(point) > -0.14199511391282338
+		# TODO safely_contains and might_contain ought to be coupled, to prevent me changing the value in one place and
+		#  forgetting the other (which I just now did).
+		return self.rhomb_contains_point(point) > -0.271#-0.19793839129906832#-0.14199511391282338
 
-	def chunk_at_location(self, target, target_level=0, generate=False):
+	def chunk_at_location(self, target, target_level=0, generate=False, verbose=False):
 		"""
 		Takes a 3D coordinate and returns the smallest list of already-generated chunks guaranteed to contain that coordinate.
 		The search proceeds from the present chunk, so it should be treated as a best-guess.
@@ -1947,24 +2047,25 @@ class Chunk:
 		for sake of convenience; they know which chunks are their parent but those chunks don't acknowledge them as
 		children. If generate=False, the list will be empty if nothing appropriate exists.
 		"""
-		print("Search invoked at level "+str(self.level)+".\nTarget level "+str(target_level)+".")
+		if verbose: print("Search invoked at level "+str(self.level)+".\nTarget level "+str(target_level)+".")
 		# TODO When generate=False and target_level is below what's been generated, should dummy chunks be returned
 		#  like in the block case? Or maybe target_level=1 should be the default and the dummy chunks system should
 		#  be replaced with an extra function for finding block coordinates within a chunk.
 		# To avoid moving up and down and up and down the tree of chunks, we must first move up and then move down.
 		# Recursive calls of chunk_at_location will move up only.
 		if self.safely_contains_point(target):
+			if verbose: print("Level "+str(self.level)+" safely contains target.")
 			if self.level == target_level:
 				return [self]
 			if self.level > target_level:
 				# We're far up enough; move downwards.
-				return self._child_chunk_search(target, target_level, generate)
+				return self._child_chunk_search(target, target_level, generate, verbose)
 			if self.level < target_level:
 				if self.parent != None:
-					self.parent.chunk_at_location(target, target_level, generate)
+					return self.parent.chunk_at_location(target, target_level, generate, verbose)
 				else:
 					if generate:
-						self.get_parent().chunk_at_location(target, target_level, generate)
+						return self.get_parent().chunk_at_location(target, target_level, generate, verbose)
 					else:
 						# We're the highest-level chunk available which contains the point, although a higher level
 						# was requested for some strange reason. This is odd enough that it should be logged, but,
@@ -1974,15 +2075,15 @@ class Chunk:
 						return [self]
 		else:
 			if self.parent is not None:
-				self.parent.chunk_at_location(target, target_level, generate)
+				return self.parent.chunk_at_location(target, target_level, generate, verbose)
 			else:
 				if generate:
-					self.get_parent().chunk_at_location(target, target_level, generate)
+					return self.get_parent().chunk_at_location(target, target_level, generate, verbose)
 				else:
 					if self.might_contain_point(target):
 						if target_level < self.level:
 							# We don't know for sure the point lies within this chunk, but we can check anyway.
-							return self._child_chunk_search(target, target_level, generate)
+							return self._child_chunk_search(target, target_level, generate, verbose)
 						else:
 							# The point could be here, but just returning [self] wouldn't return a list guaranteed to
 							# contain the target, so we have to give an empty return.
@@ -1993,7 +2094,7 @@ class Chunk:
 						print("Search returning; target lies outside existing tree and generate=False.")
 						return []
 
-	def _child_chunk_search(self, target, target_level, generate):
+	def _child_chunk_search(self, target, target_level, generate, verbose=False):
 		"""
 		This function is meant to be called from within chunk_at_location in order to do the downward half of the
 		recursive search. The functionality is the same as chunk_at_location except that this function assumes the
@@ -2010,9 +2111,10 @@ class Chunk:
 		for sake of convenience; they know which chunks are their parent but those chunks don't acknowledge them as
 		children. If generate=False, the list will be empty if nothing appropriate exists.
 		"""
-		print("Search descended to level " + str(self.level))
+		if verbose: print("Search descended to level "+str(self.level))
 		if self.level == target_level:
 			# We assume the function wouldn't have been called if the point weren't nearby, so, this chunk is the best bet.
+			if verbose: print("This is the target level; returning self. Containment: "+str(self.rhomb_contains_point(target)))
 			return [self]
 		if self.level < target_level:
 			# This should be unreachable.
@@ -2026,15 +2128,18 @@ class Chunk:
 			child_list = self.children
 			if child_list is None or len(child_list) == 0:
 				# We can't eliminate the possibility that the target is here, so we return self.
+				if verbose: print("No available children; returning self. Containment: " + str(self.rhomb_contains_point(target)))
 				return [self]
 		priority_list = [child.rhomb_contains_point(target) for child in child_list]
 		sorted_indices = list(range(len(priority_list)))
 		sorted_indices.sort(key=lambda x: priority_list[x], reverse=True)
 		if child_list[sorted_indices[0]].safely_contains_point(target):
 			# No need to search more than one children, this one contains the point.
+			if verbose: print("A child safely_contains; returning it. Containment: " + str(self.rhomb_contains_point(target)))
 			return child_list[sorted_indices[0]]._child_chunk_search(target, target_level, generate)
 		# Handle some special cases where no recursive search is needed
 		if self.safely_contains_point(target):
+			if verbose: print("Level "+str(self.level)+" safely contains target; checking children. Containment: "+ str(self.rhomb_contains_point(target)))
 			if priority_list[sorted_indices[0]] < 0:
 				# (One might think the condition here should be based on 'possibly contains', ie, if we safely
 				# contain the target at least one child should possibly contain it; but actually 'safely contains'
@@ -2051,6 +2156,8 @@ class Chunk:
 				else:
 					# Some child must contain the point, but it apparently hasn't been generated yet; this chunk is the
 					# best to return (assuming I even understand the use cases at all)
+					if verbose: print("Correct child not generated; returning self. Containment: " + str(
+						self.rhomb_contains_point(target)))
 					return [self]
 		else:
 			# Target not within "safely_contains" margin; may actually belong to a neighbor.
@@ -2058,6 +2165,8 @@ class Chunk:
 			if generate or self.all_children_generated:
 				if not child_list[sorted_indices[0]].might_contain_point(target):
 					# No point looking further.
+					if verbose: print("No child contains target; returning []. Containment: " + str(
+						self.rhomb_contains_point(target)))
 					return []
 		# OK, no one child safely contains the point, and we weren't able to return [self] or [] based on a quick check.
 		# So we need to return a list of all children which might contain it, combining output from multiple recursive
@@ -2069,8 +2178,10 @@ class Chunk:
 					# Since children are ordered by distance to target, and that's all that's used in might_contain_point,
 					# we know no further children might contain the target.
 					# No need to return [self] if 'results' is empty; we then know this chunk doesn't contain the point.
-					return results
-				child_search_results = child_list[child_i]._child_chunk_search(target, target_level, generate)
+					if verbose: print("No one child confirmed; returning list of "+str(len(results))
+									  +" possible children. Containment: " + str(self.rhomb_contains_point(target)))
+					break
+				child_search_results = child_list[child_i]._child_chunk_search(target, target_level, generate, verbose)
 				# If any one search returns something which definitely contains the target, we need to simply
 				# return that.
 				# TODO Write a test that we always manage to return a list of length one when we find the target inside
@@ -2079,10 +2190,14 @@ class Chunk:
 					# We only need to check when the length is 1, since the recursive call would return just one result
 					# if that result actually contained the point.
 					if child_search_results[0].safely_contains_point(target):
+						if verbose: print("Encountered child safely containing point; returning it. Containment: " + str(
+							self.rhomb_contains_point(target)))
 						return child_search_results
 				results += child_search_results
 			if len(results) == 0 and self.safely_contains_point(target):
-				raise Exception("Chunk at level "+str(self.level)+"'safely contains point', yet recursive search turned up empty.")
+				raise Exception("Chunk at level "+str(self.level)+"'safely contains point', yet recursive search turned up empty."
+								+"\nContainment: "+str(self.rhomb_contains_point(target))
+								+"\nClosest child: "+str(priority_list[sorted_indices[0]]))
 
 			return results
 		else:
@@ -2113,6 +2228,39 @@ class Chunk:
 			# the present chunk is a possible location of target (it might even be a sure location).
 			return [self]
 
+	def highlight_block(self):
+		"""
+		Draws an outline around a block.
+		:return: None.
+		"""
+		template_center = self.network.possible_centers_live[self.network.possible_centers.index(self.network.all_chosen_centers[self.template_index])]
+		# We use get_offset's default level (zero) so we don't need scale multipliers.
+		block = self.get_offset() + 0.5 - (template_center - np.floor(template_center))
+		block = np.array(np.round(block * 2),dtype=np.float) / 2.0
+		#print("hilite "+str(block))
+		face_origin = np.floor(block).dot(self.network.worldplane.T)
+		face_tip = np.ceil(block).dot(self.network.worldplane.T)
+		dir1, dir2, dir3 = np.eye(6)[np.nonzero(np.ceil(block) - np.floor(block))[0]].dot(
+			self.network.worldplane.T)
+		face_origin = Vector3(face_origin[0],face_origin[1],face_origin[2])
+		face_tip = Vector3(face_tip[0],face_tip[1],face_tip[2])
+		dir1 = Vector3(dir1[0], dir1[1], dir1[2])
+		dir2 = Vector3(dir2[0], dir2[1], dir2[2])
+		dir3 = Vector3(dir3[0], dir3[1], dir3[2])
+		dumb_highlight = MeshInstance.new()
+		dumb_highlight.mesh = SphereMesh()
+		dumb_highlight.translation = face_origin
+		self.network.add_child(dumb_highlight)
+		self.network.block_highlight.begin(Mesh.PRIMITIVE_LINES)
+		self.network.block_highlight.add_vertex(face_origin)
+		self.network.block_highlight.add_vertex(face_origin+dir1)
+		self.network.block_highlight.add_vertex(face_origin)
+		self.network.block_highlight.add_vertex(face_origin + dir2)
+		self.network.block_highlight.add_vertex(face_origin)
+		self.network.block_highlight.add_vertex(face_origin + dir3)
+		self.network.block_highlight.add_vertex(face_origin)
+		self.network.block_highlight.end()
+
 	def draw_mesh(self, drawp = lambda x: True):
 		"""
 		Creates a mesh consisting of the chunk's children (ie, blocks, if the chunk is level 1); then adds that mesh
@@ -2121,6 +2269,7 @@ class Chunk:
 		won't draw that block.
 		:return: none
 		"""
+		self.drawn = True
 		# TODO Generate mesh in separate thread(s), like the pure-gdscript voxel game demo does.
 		st = SurfaceTool()
 		if self.level >= 1:
@@ -2275,13 +2424,18 @@ class Chunk:
 			new_mi.mesh = new_mesh
 			st.commit(new_mesh)
 			new_mesh.surface_set_material(new_mesh.get_surface_count() - 1, COLOR)
+			#print("Actually drew something!")
 			self.network.add_child(new_mi)
+			new_mi.show()
 
 			# Finalize collision shape for the chunk
 			collider.shape.set_faces(collider_face_array)
 			body.collision_layer = 0xFFFFF
 			body.collision_mask = 0xFFFFF
 			new_mi.add_child(body)
+
+			self.mesh = new_mi
+			self.collision_mesh = body
 		else:
 			collider.free()
 			body.free()
