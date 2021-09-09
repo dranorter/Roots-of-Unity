@@ -1105,7 +1105,7 @@ class Chunk_Network(MeshInstance):
 							 [trans_inv.z.x, trans_inv.z.y, trans_inv.z.z]])
 		position = np.array([pos.x,pos.y,pos.z])
 		translation = np.array([transform.origin.x, transform.origin.y, transform.origin.z])
-		self.player_pos = position + translation
+		self.player_pos = position - np.array([2.5, 51, -66.7]) #- translation
 
 	def chunk_at_location(self, target, target_level=0, generate=False, verbose=False):
 		"""
@@ -1195,10 +1195,10 @@ class Chunk_Network(MeshInstance):
 			print(str(len(closest_chunks))+" results from search for player. Level: "+str(min([c.level for c in closest_chunks]+[0])))
 		for closest_chunk in closest_chunks:
 			self.player_guess = closest_chunk
-			closest_chunk.highlight_block()
-			closest_chunk.get_parent().highlight_block()
-			closest_chunk.get_parent().get_parent().highlight_block()
-			self.block_highlight.show()
+			#closest_chunk.highlight_block()
+			#closest_chunk.get_parent().highlight_block()
+			#closest_chunk.get_parent().get_parent().highlight_block()
+			#self.block_highlight.show()
 			if not closest_chunk.drawn:
 				closest_chunk.draw_mesh()
 			if closest_chunk.level > 1 or (closest_chunk.level == 1 and not closest_chunk.all_children_generated):
@@ -2078,6 +2078,8 @@ class Chunk:
 				return self.parent.chunk_at_location(target, target_level, generate, verbose)
 			else:
 				if generate:
+					print("Top-level chunk is "+str(self.level)+"; target not safely inside."
+						  +"Target distance: "+str(self.rhomb_contains_point(target))+". Generating new parent.")
 					return self.get_parent().chunk_at_location(target, target_level, generate, verbose)
 				else:
 					if self.might_contain_point(target):
@@ -2251,6 +2253,11 @@ class Chunk:
 		dumb_highlight.mesh = SphereMesh()
 		dumb_highlight.translation = face_origin
 		self.network.add_child(dumb_highlight)
+		dh_pos = dumb_highlight.global_transform.origin
+		dh_pos = np.array([dh_pos.x, dh_pos.y, dh_pos.z])
+		player_pos = self.network.get_node("../../Player").transform.origin
+		player_pos = np.array([player_pos.x, player_pos.y, player_pos.z])
+		print(dh_pos - player_pos)
 		self.network.block_highlight.begin(Mesh.PRIMITIVE_LINES)
 		self.network.block_highlight.add_vertex(face_origin)
 		self.network.block_highlight.add_vertex(face_origin+dir1)

@@ -12,7 +12,7 @@ height = 2.12018
 script = ExtResource( 3 )
 
 [node name="ChunkLoad" parent="." instance=ExtResource( 1 )]
-transform = Transform( 0.534352, -0.845262, 0, 0.746322, 0.471805, -0.469472, 0.396826, 0.250863, 0.882948, 0, -78.4999, 58.761 )
+transform = Transform( 0.534352, -0.845262, 0, 0.746322, 0.471805, -0.469472, 0.396826, 0.250863, 0.882948, 0, 0, 0 )
 
 [node name="CameraBody" type="Spatial" parent="."]
 
@@ -28,7 +28,7 @@ enabled = true
 cast_to = Vector3( 0, 0, -2 )
 
 [node name="Player" type="KinematicBody" parent="."]
-transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0816016, 0, 0 )
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.082, 78, -58 )
 script = ExtResource( 2 )
 
 [node name="Hitbox" type="CollisionShape" parent="Player"]
