@@ -103,6 +103,9 @@ class Chunk_Network(MeshInstance):
 						'[ 2.   1.5  1.   0.5  1.  -0.5]',
 						'[ 2.   2.   0.5 -0.5  2.  -0.5]', '[2.  2.  2.  0.5 0.5 0.5]']
 
+	rhomb_indices = np.array(
+		[0, 2, 7, 0, 7, 3, 0, 3, 5, 0, 5, 4, 0, 4, 6, 0, 6, 2, 1, 4, 5, 1, 6, 4, 1, 2, 6, 1, 7, 2, 1, 3, 7, 1, 5, 3])
+
 	player_pos = np.zeros((3,))
 	player_guess = None
 	block_highlight = ImmediateGeometry.new()
@@ -2326,15 +2329,14 @@ class Chunk:
 		"""
 		self.drawn = True
 		# TODO Generate mesh in separate thread(s), like the pure-gdscript voxel game demo does.
-		st = SurfaceTool()
+		#st = SurfaceTool()
 		if self.level >= 1:
 			multiplier = self.network.phi_powers[(self.level-1)*3]
 		if self.level < 1:
 			multiplier = 1.0/self.network.phi_powers[-((self.level-1)*3)]
-		st.begin(Mesh.PRIMITIVE_TRIANGLES)
-		st.add_color(Color(r.random(), r.random(), r.random()))
+		#st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		#st.add_color(Color(r.random(), r.random(), r.random()))
 
-		# Alternate Method
 		vertices = PoolVector3Array()
 		indices = PoolIntArray()
 		normals = PoolVector3Array()
@@ -2347,6 +2349,20 @@ class Chunk:
 		collider_face_array = PoolVector3Array()
 
 		drew_something = False
+
+		# The block corner indices are added in a predictable order, so we can construct our index array all at once.
+		# The pattern for one block is stored in the Chunk_Network as rhomb_indices. Here's how it looks.
+		# rhomb_indices = np.array([0, 2, 7, 0, 7, 3, 0, 3, 5, 0, 5, 4, 0, 4, 6, 0, 6, 2, 1, 4, 5, 1, 6, 4, 1, 2, 6, 1, 7, 2, 1, 3, 7, 1, 5, 3])
+		# Now we just need to add the offset of 8 for each new block.
+		to_draw = np.array([self.block_values[block_i] > 0 and drawp(self.blocks[block_i]) for block_i in range(len(self.blocks))])
+		num_to_draw = sum(to_draw)
+		index_data = np.tile(self.network.rhomb_indices,num_to_draw) \
+					 + 8*np.repeat(np.arange(num_to_draw),len(self.network.rhomb_indices))
+		# Careful now!
+		indices.resize(36 * sum(to_draw))
+		with indices.raw_access() as indices_dump:
+			for i in range(36 * num_to_draw):
+				indices_dump[i] = index_data[i]
 
 		for block_i in range(len(self.blocks)):
 			block = self.blocks[block_i] + self.offset
@@ -2394,158 +2410,19 @@ class Chunk:
 				normals.push_back(Vector3(*(corner7 - corner4) / np.linalg.norm(corner7 - corner4)))
 				normals.push_back(Vector3(*(corner8 - corner5) / np.linalg.norm(corner8 - corner5)))
 
-				index_at_corner = [len(vertices)-8 + n for n in range(8)]
-
-				indices.push_back(index_at_corner[0])
-				indices.push_back(index_at_corner[2])
-				indices.push_back(index_at_corner[7])
-				indices.push_back(index_at_corner[0])
-				indices.push_back(index_at_corner[7])
-				indices.push_back(index_at_corner[3])
-				indices.push_back(index_at_corner[0])
-				indices.push_back(index_at_corner[3])
-				indices.push_back(index_at_corner[5])
-				indices.push_back(index_at_corner[0])
-				indices.push_back(index_at_corner[5])
-				indices.push_back(index_at_corner[4])
-				indices.push_back(index_at_corner[0])
-				indices.push_back(index_at_corner[4])
-				indices.push_back(index_at_corner[6])
-				indices.push_back(index_at_corner[0])
-				indices.push_back(index_at_corner[6])
-				indices.push_back(index_at_corner[2])
-				indices.push_back(index_at_corner[1])
-				indices.push_back(index_at_corner[4])
-				indices.push_back(index_at_corner[5])
-				indices.push_back(index_at_corner[1])
-				indices.push_back(index_at_corner[6])
-				indices.push_back(index_at_corner[4])
-				indices.push_back(index_at_corner[1])
-				indices.push_back(index_at_corner[2])
-				indices.push_back(index_at_corner[6])
-				indices.push_back(index_at_corner[1])
-				indices.push_back(index_at_corner[7])
-				indices.push_back(index_at_corner[2])
-				indices.push_back(index_at_corner[1])
-				indices.push_back(index_at_corner[3])
-				indices.push_back(index_at_corner[7])
-				indices.push_back(index_at_corner[1])
-				indices.push_back(index_at_corner[5])
-				indices.push_back(index_at_corner[3])
-
-				dir1 = Vector3(dir1[0], dir1[1], dir1[2])
-				dir2 = Vector3(dir2[0], dir2[1], dir2[2])
-				dir3 = Vector3(dir3[0], dir3[1], dir3[2])
-
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1)
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1 + dir2)
-
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1 + dir2)
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2)
-
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2)
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2 + dir3)
-
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2 + dir3)
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3)
-
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3)
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3 + dir1)
-
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3 + dir1)
-				st.add_vertex(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1)
-
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1 - dir2)
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1)
-
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2)
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1 - dir2)
-
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2 - dir3)
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2)
-
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3)
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2 - dir3)
-
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3 - dir1)
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3)
-
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1)
-				st.add_vertex(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3 - dir1)
-
-				# Now create colliders
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1)
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1 + dir2)
-
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1 + dir2)
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2)
-
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2)
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2 + dir3)
-
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir2 + dir3)
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3)
-
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3)
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3 + dir1)
-
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]))
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir3 + dir1)
-				collider_face_array.push_back(Vector3(face_origin[0], face_origin[1], face_origin[2]) + dir1)
-
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1 - dir2)
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1)
-
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2)
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1 - dir2)
-
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2 - dir3)
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2)
-
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3)
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir2 - dir3)
-
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3 - dir1)
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3)
-
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]))
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir1)
-				collider_face_array.push_back(Vector3(face_tip[0], face_tip[1], face_tip[2]) - dir3 - dir1)
+		# Now that we've got the vertices, let's try and calculate the colliders in one step too.
+		if len(vertices) > 0:
+			# Converting the PoolVector3Array to a numpy array simply flattens, for 3x the length
+			collider_data = np.array(vertices)[index_data]
+			# Careful now!
+			collider_face_array.resize(36 * 3 * num_to_draw)
+			with collider_face_array.raw_access() as collider_dump:
+				for i in range(36*num_to_draw):
+					collider_dump[i] = collider_data[i]
 
 		# Finalize mesh for the chunk
 
 		if drew_something:
-			#st.generate_normals()
-			#new_mesh = ArrayMesh()
-			#new_mi = MeshInstance.new()
-			#new_mi.mesh = new_mesh
-			#st.commit(new_mesh)
-			#new_mesh.surface_set_material(new_mesh.get_surface_count() - 1, COLOR)
-			#print("Actually drew something!")
-			#self.network.add_child(new_mi)
-			#new_mi.show()
 
 			# Alternate method
 			new_mesh = ArrayMesh()
