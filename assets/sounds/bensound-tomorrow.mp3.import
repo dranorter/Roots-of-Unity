@@ -1,0 +1,15 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+path="res://.import/bensound-tomorrow.mp3-50ae3b3f8d033edfe0823c2865b26ede.mp3str"
+
+[deps]
+
+source_file="res://assets/sounds/bensound-tomorrow.mp3"
+dest_files=[ "res://.import/bensound-tomorrow.mp3-50ae3b3f8d033edfe0823c2865b26ede.mp3str" ]
+
+[params]
+
+loop=true
+loop_offset=0
