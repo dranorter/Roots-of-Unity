@@ -1210,7 +1210,8 @@ class Chunk_Network(MeshInstance):
 		# dropoff in detail after the sphere is exited is too harsh. Ideally what we want is for parts of the world
 		# which the player can actually see to become more detailed, without too much switching back and forth as to
 		# what is and isn't loaded, and with fairly even coverage.
-
+		if r.random() < 0.95:
+			return
 		# For now, we use a loading radius, which cautiously expands.
 
 		self.block_highlight.clear()
@@ -1853,7 +1854,92 @@ class Chunk:
 		self.is_topmost = False
 		self.network = network
 		self.template_index = template_index
+		self.offset = offset
+		self.level = level
 		self.blocks = network.all_blocks[template_index][0]
+		# TODO TEMPORARY slow template fix
+		to_skip = []
+		for block_i in range(len(self.blocks)):
+
+			lowered_center = self.network.custom_pow(np.array(self.network.deflation_face_axes),
+													 self.level - 1).dot(
+				self.get_offset(level=self.level - 1) + self.blocks[block_i])
+			lowered_origin = self.network.custom_pow(
+				np.array(self.network.deflation_face_axes),
+				self.level - 1).dot(
+				self.get_offset(level=self.level - 1)+np.floor(self.blocks[block_i]))
+			block_axes = np.nonzero(self.blocks[block_i] - np.floor(self.blocks[block_i]))[0]
+			lowered_testpoint = self.network.custom_pow(
+				np.array(self.network.deflation_face_axes),
+				self.level - 1).dot(
+				self.get_offset(level=self.level - 1)+np.floor(self.blocks[block_i])
+				+ 0.8 * np.eye(6)[block_axes[0]]
+				+ 0.1 * np.eye(6)[block_axes[1]]
+				+ 0.1 * np.eye(6)[block_axes[2]])
+			lowered_testpoint2 = self.network.custom_pow(
+				np.array(self.network.deflation_face_axes),
+				self.level - 1).dot(
+				self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
+				+ 0.1 * np.eye(6)[block_axes[0]]
+				+ 0.8 * np.eye(6)[block_axes[1]]
+				+ 0.1 * np.eye(6)[block_axes[2]])
+			lowered_testpoint3 = self.network.custom_pow(
+				np.array(self.network.deflation_face_axes),
+				self.level - 1).dot(
+				self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
+				+ 0.1 * np.eye(6)[block_axes[0]]
+				+ 0.1 * np.eye(6)[block_axes[1]]
+				+ 0.8 * np.eye(6)[block_axes[2]])
+			lowered_testpoint4 = self.network.custom_pow(
+				np.array(self.network.deflation_face_axes),
+				self.level - 1).dot(
+				self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
+				+ 0.8 * np.eye(6)[block_axes[0]]
+				+ 0.8 * np.eye(6)[block_axes[1]]
+				+ 0.1 * np.eye(6)[block_axes[2]])
+			dist_center = self.rhomb_contains_point(lowered_center.dot(self.network.worldplane.T))
+			dist_origin = self.rhomb_contains_point(lowered_origin.dot(self.network.worldplane.T))
+			dist_testpoint = self.rhomb_contains_point(lowered_testpoint.dot(self.network.worldplane.T))
+			dist_testpoint2 = self.rhomb_contains_point(lowered_testpoint2.dot(self.network.worldplane.T))
+			dist_testpoint3 = self.rhomb_contains_point(lowered_testpoint3.dot(self.network.worldplane.T))
+			dist_testpoint4 = self.rhomb_contains_point(lowered_testpoint4.dot(self.network.worldplane.T))
+			test_value = None
+			if abs(dist_center) < 1e-15:
+				# Block most likely picked up by a neighboring chunk in its template. Decide who the block belongs to.
+				# The idea is, the block's origin is canonical (ie, the different templates will agree on it). Whichever
+				# chunk contains the origin can take ownership of the point.
+				if abs(dist_origin) < 1e-15:
+					# Origin doesn't work as tiebreak, go to first test point.
+					if abs(dist_testpoint) < 1e-15:
+						# First testpoint doesn't work as tiebreak; go to second testpoint.
+						#print()
+						#print(dist_testpoint)
+						#print(lowered_testpoint)
+						if abs(dist_testpoint2) < 1e-15:
+							# Second testpoint doesn't work either!!
+							#print(dist_testpoint2)
+							#print(lowered_testpoint2)
+							if abs(dist_testpoint3) < 1e-15:
+								#print(dist_testpoint3)
+								#print(lowered_testpoint3)
+								if abs(dist_testpoint4) < 1e-15:
+									#print(dist_testpoint4)
+									#print(lowered_testpoint4)
+									raise Exception("Unable to assign block to a specific chunk. Please add 5th test point.")
+								else:
+									test_value = dist_testpoint4
+							else:
+								test_value = dist_testpoint3
+						else:
+							test_value = dist_testpoint2
+					else:
+						test_value = dist_testpoint
+				else:
+					test_value = dist_origin
+				# If test_value > 0, the block stays.
+				if test_value < 0:
+					to_skip.append(block_i)
+		self.blocks = [self.blocks[i] for i in range(len(self.blocks)) if i not in to_skip]
 		self.block_values = np.zeros((len(self.blocks)), dtype=np.int)
 		# Block centers are neighbors if two dim.s differ by 0.5 and no others differ.
 		# TODO I've got to include neighbor information in the templates themselves.
@@ -1864,10 +1950,8 @@ class Chunk:
 		diffs_of_zero = diffs == 0
 		self.blocks_neighbor = (np.sum(diffs_of_half, axis=2) == 2)*(np.sum(diffs_of_zero, axis=2) == 4)
 		#self.blocks_neighbor = np.zeros((len(self.blocks),len(self.blocks)))
-		self.offset = offset
-		self.level = level
 		self.parent = None
-		self.children = None
+		self.children = [None]*len(self.blocks)
 		self.all_children_generated = False
 		if level == 0: self.all_children_generated = True
 		self.drawn = False
@@ -1880,6 +1964,16 @@ class Chunk:
 			if len(parents) > 1:
 				raise Exception("Got more than one parents for a chunk; a way to handle this is currently not implemented.")
 			self.parent = Chunk(self.network, parents[0][0], parents[0][1], self.level+1)
+			# We have to set ourselves as a child, in the appropriate place
+			for i in range(len(self.parent.blocks)):
+				if np.all(self.get_offset(self.level) - self.parent.get_offset(self.level)
+						  + np.round((self.network.chunk_center_lookup(self.template_index))
+											 .dot(np.array(self.network.deflation_face_axes).T)*2)/2# Use center, to differentiate
+						  == self.parent.blocks[i]):
+					self.parent.children[i] = self
+					self.index_in_parent = i
+					break
+			print("Did block end up parent's child? "+str(self in self.parent.children))
 			if self.is_topmost:
 				print("Adding new top chunk of level "+str(self.level+1))
 				self.is_topmost = False
@@ -1888,24 +1982,24 @@ class Chunk:
 		return self.parent
 
 	def get_children(self):
+		"""
+		Returns all direct children, generating any which are not yet generated.
+		:return: A list of all children as chunks, in the same order as in the chunk template.
+		"""
 		if not self.all_children_generated:
-			children = self.network.generate_children(self.template_index,self.offset,self.level)
-			existing_children = self.children
-			if existing_children == None:
-				existing_children = []
-			dupe_indices = []
-			if len(existing_children) > 0:
-				# TODO I would love a faster way than looping through everything; maybe even never generate the extras in the first place.
-				for child_i in range(len(children)):
-					for old_child in existing_children:
-						if old_child.offset == children[child_i][1]:
-							dupe_indices.append(child_i)
-				print("Skipping "+str(len(dupe_indices))+" children; expected to skip "+str(len(existing_children))+".")
-				children = [children[i] for i in range(len(children)) if i not in dupe_indices]
-			self.children = [Chunk(self.network, index, offset, self.level-1) for index, offset in children]
+			children = self.network.generate_children(self.template_index, self.offset, self.level)
+			if len(children) != len(self.blocks):
+				print("NOT FINDING TEMPLATES FOR EVERY CHILD")
+				print("Children: "+str(len(self.blocks)))
+				print("Templates:"+str(len(children)))
+				raise Exception("Not finding templates for every child!")
+			for i in range(len(children)):
+				if self.children[i] is None:
+					self.children[i] = Chunk(self.network, children[i][0], children[i][1], self.level-1)
 			self.all_children_generated = True
-			for child in self.children:
-				child.parent = self
+			for child_i in range(len(self.children)):
+				self.children[child_i].parent = self
+				self.children[child_i].index_in_parent = child_i
 			if self.level == 2:
 				# Very basic terrain generation
 				for child in self.children:
@@ -1927,7 +2021,88 @@ class Chunk:
 						child.draw_mesh()
 			if self.level == 1 and not self.drawn:
 				self.draw_mesh()
+			# Checking for overlap with neighbors!
+			# This is doubtless slow, but I have to do it for now.
+			# OK, after the below testing, here are the facts:
+			# - Sadly, block centers do sometimes fall exactly on chunk boundaries. This is something I'd been hoping
+			#   was not true since it makes block ownership very ambiguous.
+			# - I tried testing the block's origin to "break the tie", and found that it, too, was sometimes on the
+			#   boundary, so no decision could be made.
+			# - Additionally, it should be noted that sometimes the origin is the same distance out from each chunk,
+			#   but that distance is about 0.236. Surely, this means the origin would fall in some other neighbor; but
+			#   I haven't verified that.
+			# - I tried introducing a 'test point', specifically (1, 0, 0) in the block's three axes, but this too
+			#   turned out to fall on the boundary some of the time, so didn't break all ties.
+			# - Introducing a second test point, (0, 1, 0), appears to break all ties.
+			# TODO So, the tiebreakers can be used to unambiguously assign the block to one parent or another. I need
+			#  to bake this strategy into my chunk templates, removing blocks according to each successive tiebreak.
+			# TODO Don't just scrap below code; alter it to detect and store block neighbors across chunk boundaries.
+			if self.parent is not None:
+				neighbor_indices = np.nonzero(self.parent.blocks_neighbor[self.index_in_parent])[0]
+				for neighbor_i in neighbor_indices:
+					if self.parent.children[neighbor_i] is not None:
+						neighbor = self.parent.children[neighbor_i]
+						if neighbor.template_index == self.template_index:
+							if np.all(neighbor.offset == self.offset):
+								print("Warning: Two children of a chunk are identical.")
+						for neighbor_child_i in range(len(neighbor.children)):
+							neighbor_child = neighbor.children[neighbor_child_i]
+							if neighbor_child is not None:
+								for child_i in range(len(self.children)):
+									child = self.children[child_i]
+									if child is not None:
+										if child.template_index == neighbor_child.template_index:
+											if np.all(child.offset == neighbor_child.offset):
+												print("Warning: Duplicate chunk found. Mending network... This will create a loop...")
+												#print("Guilty templates: ")
+												#print(self.template_index)
+												#print(neighbor.template_index)
+												#print("Containment values:")
+												lowered_center = self.network.custom_pow(np.array(self.network.deflation_face_axes),
+																						self.level - 1).dot(self.get_offset(level=self.level-1)+self.blocks[child_i])
+												lowered_origin = self.network.custom_pow(
+													np.array(self.network.deflation_face_axes),
+													self.level - 1).dot(
+													child.get_offset(level=self.level - 1))
+												block_axes = np.nonzero(self.blocks[child_i] - np.floor(self.blocks[child_i]))[0]
+												lowered_testpoint = self.network.custom_pow(
+													np.array(self.network.deflation_face_axes),
+													self.level - 1).dot(
+													child.get_offset(level=self.level - 1)+1.0*np.eye(6)[block_axes[0]]+0.0*np.eye(6)[block_axes[1]]+0.0*np.eye(6)[block_axes[2]])
+												lowered_testpoint2 = self.network.custom_pow(
+													np.array(self.network.deflation_face_axes),
+													self.level - 1).dot(
+													child.get_offset(level=self.level - 1) + 0.0 * np.eye(6)[
+														block_axes[0]] + 1.0 * np.eye(6)[block_axes[1]] + 0.0 *
+													np.eye(6)[block_axes[2]])
+												self_dist_center = self.rhomb_contains_point(lowered_center.dot(self.network.worldplane.T))
+												neighbor_dist_center = neighbor.rhomb_contains_point(lowered_center.dot(self.network.worldplane.T))
+												self_dist_origin = self.rhomb_contains_point(
+													lowered_origin.dot(self.network.worldplane.T))
+												neighbor_dist_origin = neighbor.rhomb_contains_point(
+													lowered_origin.dot(self.network.worldplane.T))
+												self_dist_testpoint = self.rhomb_contains_point(lowered_testpoint.dot(self.network.worldplane.T))
+												neighbor_dist_testpoint = neighbor.rhomb_contains_point(
+													lowered_testpoint.dot(self.network.worldplane.T))
+												self_dist_testpoint2 = self.rhomb_contains_point(
+													lowered_testpoint2.dot(self.network.worldplane.T))
+												neighbor_dist_testpoint2 = neighbor.rhomb_contains_point(
+													lowered_testpoint2.dot(self.network.worldplane.T))
+												if self_dist_origin == neighbor_dist_origin:
+													#print("Origin distance: "+str(self_dist_origin))
+													if self_dist_testpoint == neighbor_dist_testpoint:
+														#print("Test1 distance: " + str(self_dist_testpoint))
+														if self_dist_testpoint2 == neighbor_dist_testpoint2:
+															print("Your scheme will never work!")
+												self.children[child_i] = neighbor_child
 		return self.children
+
+	def get_existing_children(self):
+		"""
+		Note; these are typically not in an order matching self.blocks_neighbor.
+		:return:
+		"""
+		return [child for child in self.children if child != None]
 
 	def rhomb_contains_point(self, point):
 		"""
@@ -1962,7 +2137,6 @@ class Chunk:
 			# has positive size.
 			axes = np.nonzero(ch_c - np.floor(ch_c) - 0.5)[0]
 			# Convert point into the rhombohedron's basis for easy math
-			# TODO I really ought to have all these matrix inverses pre-computed.
 			# TODO Should use the golden field object to calculate these accurately; matrix inverse will introduce error.
 			axes_matrix = np.linalg.inv(self.network.worldplane.T[axes]*self.network.phipow(3*self.level))
 		worldplane_chunk_origin = self.get_offset(0).dot(self.network.worldplane.T)
@@ -2165,7 +2339,7 @@ class Chunk:
 		if generate or self.all_children_generated:
 			child_list = self.get_children()
 		else:
-			child_list = self.children
+			child_list = self.get_existing_children()
 			if child_list is None or len(child_list) == 0:
 				# We can't eliminate the possibility that the target is here, so we return self.
 				if verbose: print("No available children; returning self. Containment: " + str(self.rhomb_contains_point(target)))
@@ -2327,6 +2501,8 @@ class Chunk:
 		won't draw that block.
 		:return: none
 		"""
+		starttime = time.perf_counter()
+
 		self.drawn = True
 		# TODO Generate mesh in separate thread(s), like the pure-gdscript voxel game demo does.
 		#st = SurfaceTool()
@@ -2348,67 +2524,76 @@ class Chunk:
 		collider.shape = ConcavePolygonShape()
 		collider_face_array = PoolVector3Array()
 
-		drew_something = False
+		preliminaries = time.perf_counter()
 
 		# The block corner indices are added in a predictable order, so we can construct our index array all at once.
 		# The pattern for one block is stored in the Chunk_Network as rhomb_indices. Here's how it looks.
 		# rhomb_indices = np.array([0, 2, 7, 0, 7, 3, 0, 3, 5, 0, 5, 4, 0, 4, 6, 0, 6, 2, 1, 4, 5, 1, 6, 4, 1, 2, 6, 1, 7, 2, 1, 3, 7, 1, 5, 3])
 		# Now we just need to add the offset of 8 for each new block.
 		to_draw = np.array([self.block_values[block_i] > 0 and drawp(self.blocks[block_i]) for block_i in range(len(self.blocks))])
+		blocks_to_draw = [self.blocks[i] + self.offset for i in range(len(to_draw)) if to_draw[i]]
+		# Check for exposed faces
+		# print(sum(self.blocks_neighbor[block_i]))
+		# if sum(self.blocks_neighbor[block_i]) >= 6:
+		# 	# Six neighbors lie inside this chunk
+		# 	if np.nonzero(self.block_values[np.nonzero(self.blocks_neighbor[block_i])[0]])[0].shape[0] == 6:
+		# 		# Skip this block
+		# 		print("Skipping a block yay!")
+		# 		continue
+		build_draw_list = time.perf_counter()
+
 		num_to_draw = sum(to_draw)
+
+		if num_to_draw == 0:
+			collider.free()
+			body.free()
+			return
+
 		index_data = np.tile(self.network.rhomb_indices,num_to_draw) \
 					 + 8*np.repeat(np.arange(num_to_draw),len(self.network.rhomb_indices))
 		# Careful now!
-		indices.resize(36 * sum(to_draw))
+		indices.resize(36 * num_to_draw)
 		with indices.raw_access() as indices_dump:
 			for i in range(36 * num_to_draw):
 				indices_dump[i] = index_data[i]
 
-		for block_i in range(len(self.blocks)):
-			block = self.blocks[block_i] + self.offset
-			if self.block_values[block_i] > 0 and drawp(block):
-				# Check for exposed faces
-				#print(sum(self.blocks_neighbor[block_i]))
-				# if sum(self.blocks_neighbor[block_i]) >= 6:
-				# 	# Six neighbors lie inside this chunk
-				# 	if np.nonzero(self.block_values[np.nonzero(self.blocks_neighbor[block_i])[0]])[0].shape[0] == 6:
-				# 		# Skip this block
-				# 		print("Skipping a block yay!")
-				# 		continue
+		index_precalc = time.perf_counter()
 
-				drew_something = True
+		block_origins = np.floor(blocks_to_draw).dot(self.network.worldplane.T) * multiplier
+		block_axes = ((np.array([np.eye(6)]*len(blocks_to_draw))[np.ceil(blocks_to_draw)
+				- np.floor(blocks_to_draw) != 0]).dot(self.network.worldplane.T) * multiplier
+					  ).reshape((len(blocks_to_draw),3,3))
+		# right hand rule
+		block_axes_flipped = block_axes[:,[1,0,2],:]
+		block_axes = np.where(
+			np.repeat(np.diag(np.cross(block_axes[:,0],block_axes[:,1]).dot(block_axes[:,2].T)) < 0, 9).reshape(-1,3,3),
+							  block_axes_flipped, block_axes)
+		corner1 = block_origins
+		corner2 = block_origins + np.sum(block_axes, axis=1)
+		corner3 = block_origins + block_axes[:,0]
+		corner4 = block_origins + block_axes[:,1]
+		corner5 = block_origins + block_axes[:,2]
+		corner6 = corner2 - block_axes[:,0]
+		corner7 = corner2 - block_axes[:,1]
+		corner8 = corner2 - block_axes[:,2]
 
-				face_origin = np.floor(block).dot(self.network.worldplane.T) * multiplier
-				face_tip = np.ceil(block).dot(self.network.worldplane.T) * multiplier
-				dir1, dir2, dir3 = np.eye(6)[np.nonzero(np.ceil(block) - np.floor(block))[0]].dot(
-					self.network.worldplane.T) * multiplier
-				# Make "right hand rule" apply
-				if np.cross(dir1, dir2).dot(dir3) < 0:
-					_ = dir1
-					dir1 = dir2
-					dir2 = _
-				corner1, corner2, corner3, corner4, corner5, corner6, corner7, corner8 = (
-					face_origin, face_tip, face_origin + dir1, face_origin + dir2, face_origin + dir3,
-					face_tip - dir1, face_tip - dir2, face_tip - dir3
-				)
+		center = (block_origins + np.sum(block_axes, axis=1)/2).repeat(8,axis=0)
 
-				vertices.push_back(Vector3(corner1[0], corner1[1], corner1[2]))
-				vertices.push_back(Vector3(corner2[0], corner2[1], corner2[2]))
-				vertices.push_back(Vector3(corner3[0], corner3[1], corner3[2]))
-				vertices.push_back(Vector3(corner4[0], corner4[1], corner4[2]))
-				vertices.push_back(Vector3(corner5[0], corner5[1], corner5[2]))
-				vertices.push_back(Vector3(corner6[0], corner6[1], corner6[2]))
-				vertices.push_back(Vector3(corner7[0], corner7[1], corner7[2]))
-				vertices.push_back(Vector3(corner8[0], corner8[1], corner8[2]))
+		vertices_data = np.array([corner1, corner2, corner3, corner4,
+								  corner5, corner6, corner7, corner8]).transpose((1,0,2)).reshape((-1,3))
 
-				normals.push_back(Vector3(*(face_origin - face_tip)/np.linalg.norm(face_origin - face_tip)))
-				normals.push_back(Vector3(*(face_tip - face_origin) / np.linalg.norm(face_origin - face_tip)))
-				normals.push_back(Vector3(*(corner3 - corner6) / np.linalg.norm(corner3 - corner6)))
-				normals.push_back(Vector3(*(corner4 - corner7) / np.linalg.norm(corner4 - corner7)))
-				normals.push_back(Vector3(*(corner5 - corner8) / np.linalg.norm(corner5 - corner8)))
-				normals.push_back(Vector3(*(corner6 - corner3) / np.linalg.norm(corner6 - corner3)))
-				normals.push_back(Vector3(*(corner7 - corner4) / np.linalg.norm(corner7 - corner4)))
-				normals.push_back(Vector3(*(corner8 - corner5) / np.linalg.norm(corner8 - corner5)))
+		vertices.resize(8 * num_to_draw)
+		with vertices.raw_access() as vertices_dump:
+			for i in range(8 * num_to_draw):
+				vertices_dump[i] = Vector3(vertices_data[i][0], vertices_data[i][1], vertices_data[i][2])
+
+		normal_data = (vertices_data - center)/np.linalg.norm(vertices_data - center,axis=1).repeat(3).reshape((-1,3))
+		normals.resize(8 * num_to_draw)
+		with normals.raw_access() as normals_dump:
+			for i in range(8 * num_to_draw):
+				normals[i] = Vector3(normal_data[i][0], normal_data[i][1], normal_data[i][2])
+
+		vertex_precalc = time.perf_counter()
 
 		# Now that we've got the vertices, let's try and calculate the colliders in one step too.
 		if len(vertices) > 0:
@@ -2419,37 +2604,45 @@ class Chunk:
 			with collider_face_array.raw_access() as collider_dump:
 				for i in range(36*num_to_draw):
 					collider_dump[i] = collider_data[i]
-
+		collision_precalc = time.perf_counter()
 		# Finalize mesh for the chunk
 
-		if drew_something:
+		new_mesh = ArrayMesh()
+		arrays = Array()
+		arrays.resize(ArrayMesh.ARRAY_MAX)
+		arrays[ArrayMesh.ARRAY_VERTEX] = vertices
+		arrays[ArrayMesh.ARRAY_INDEX] = indices
+		arrays[ArrayMesh.ARRAY_NORMAL] = normals
+		arrays[ArrayMesh.ARRAY_COLOR] = PoolColorArray(Array([Color(r.random(),r.random(),r.random())]*len(vertices)))
+		new_mesh.add_surface_from_arrays(ArrayMesh.PRIMITIVE_TRIANGLES,arrays)
+		new_mi = MeshInstance.new()
+		new_mi.mesh = new_mesh
+		new_mesh.surface_set_material(new_mesh.get_surface_count() - 1, COLOR)
 
-			# Alternate method
-			new_mesh = ArrayMesh()
-			arrays = Array()
-			arrays.resize(ArrayMesh.ARRAY_MAX)
-			arrays[ArrayMesh.ARRAY_VERTEX] = vertices
-			arrays[ArrayMesh.ARRAY_INDEX] = indices
-			arrays[ArrayMesh.ARRAY_NORMAL] = normals
-			arrays[ArrayMesh.ARRAY_COLOR] = PoolColorArray(Array([Color(r.random(),r.random(),r.random())]*len(vertices)))
-			new_mesh.add_surface_from_arrays(ArrayMesh.PRIMITIVE_TRIANGLES,arrays)
-			new_mi = MeshInstance.new()
-			new_mi.mesh = new_mesh
-			new_mesh.surface_set_material(new_mesh.get_surface_count() - 1, COLOR)
-			self.network.add_child(new_mi)
-			new_mi.show()
+		self.network.add_child(new_mi)
+		new_mi.show()
 
-			# Finalize collision shape for the chunk
-			collider.shape.set_faces(collider_face_array)
-			body.collision_layer = 0xFFFFF
-			body.collision_mask = 0xFFFFF
-			new_mi.add_child(body)
+		add_surface = time.perf_counter()
 
-			self.mesh = new_mi
-			self.collision_mesh = body
-		else:
-			collider.free()
-			body.free()
+		# Finalize collision shape for the chunk
+		collider.shape.set_faces(collider_face_array)
+		body.collision_layer = 0xFFFFF
+		body.collision_mask = 0xFFFFF
+		new_mi.add_child(body)
+
+		add_collider = time.perf_counter()
+
+		self.mesh = new_mi
+		self.collision_mesh = body
+		final_time = time.perf_counter()
+		#print("\nPreliminaries:     "+str(preliminaries - starttime))
+		#print("Build draw list:   "+str(build_draw_list - preliminaries))
+		#print("Index building:    "+str(index_precalc - build_draw_list))
+		#print("Vertex building:   "+ str(vertex_precalc - index_precalc))
+		#print("Collision precalc: "+str(collision_precalc - vertex_precalc))
+		#print("Add surface:       "+str(add_surface - collision_precalc))
+		#print("Add Collider:      "+str(add_collider - add_surface))
+		#print("Final time:        "+ str(final_time - add_collider))
 
 class GoldenField:
 	phi = 1.61803398874989484820458683
