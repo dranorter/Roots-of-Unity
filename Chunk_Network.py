@@ -949,6 +949,7 @@ class Chunk_Network(MeshInstance):
 		print("Rescaled chunk center: " + str(chunk_as_block_center))
 		print("Rescaled chunk origin: " + str(np.linalg.inv(self.deflation_face_axes).dot(offset)))
 
+		#TODO Low priority, but: should the below be rewritten to use the constraint tree?
 		closest_non_hit = None
 		inside_hits = []
 		outside_hits = []
@@ -979,6 +980,7 @@ class Chunk_Network(MeshInstance):
 				break
 		# Checking outside blocks takes a lot longer, we only want to  do it if we need to
 		if len(inside_hits) == 0:
+			print("No inside hits; checking outside")
 			for i in range(len(self.all_blocks)):
 				outside_blocks = np.array(self.all_blocks[i][1])
 				constraint = np.array(self.all_constraints[i])
@@ -1291,6 +1293,90 @@ class Chunk_Network(MeshInstance):
 			* self.phipow(3 * level)) for level in range(10)] for center in self.possible_centers}
 
 		print("Created axes matrix lookup table")
+		print(time.perf_counter() - starttime)
+
+		print("Removing duplicate blocks...")
+
+		def rhomb_contains_point(point, template_index, self = self):
+			level = 1
+			axes_matrix = self.axes_matrix_lookup[self.all_chosen_centers[template_index]][level]
+			target_coords_in_chunk_axes = np.array(point).dot(axes_matrix) - 0.5
+			# To measure distance from closest face-plane, we take the minimum of the absolute value.
+			dist_from_center = np.abs(target_coords_in_chunk_axes)
+			return np.min(0.5 - dist_from_center)
+
+		for t_i in []:#range(len(self.all_blocks)):
+			to_skip = []
+			blocks = self.all_blocks[t_i][0]
+			for block_i in range(len(self.all_blocks[t_i][0])):
+				center = blocks[block_i]
+				origin = np.floor(blocks[block_i])
+				axes = np.nonzero(blocks[block_i] - np.floor(blocks[block_i]))[0]
+				testpoint = (np.floor(blocks[block_i])
+					+ 0.8 * np.eye(6)[axes[0]]
+					+ 0.1 * np.eye(6)[axes[1]]
+					+ 0.1 * np.eye(6)[axes[2]])
+				testpoint2 = (
+					 np.floor(blocks[block_i])
+					+ 0.1 * np.eye(6)[axes[0]]
+					+ 0.8 * np.eye(6)[axes[1]]
+					+ 0.1 * np.eye(6)[axes[2]])
+				testpoint3 = (
+					np.floor(blocks[block_i])
+					+ 0.1 * np.eye(6)[axes[0]]
+					+ 0.1 * np.eye(6)[axes[1]]
+					+ 0.8 * np.eye(6)[axes[2]])
+				testpoint4 = (
+					np.floor(blocks[block_i])
+					+ 0.8 * np.eye(6)[axes[0]]
+					+ 0.8 * np.eye(6)[axes[1]]
+					+ 0.1 * np.eye(6)[axes[2]])
+				dist_center = rhomb_contains_point(center.dot(self.worldplane.T), t_i)
+				dist_origin = rhomb_contains_point(origin.dot(self.worldplane.T), t_i)
+				dist_testpoint = rhomb_contains_point(testpoint.dot(self.worldplane.T), t_i)
+				dist_testpoint2 = rhomb_contains_point(testpoint2.dot(self.worldplane.T), t_i)
+				dist_testpoint3 = rhomb_contains_point(testpoint3.dot(self.worldplane.T), t_i)
+				dist_testpoint4 = rhomb_contains_point(testpoint4.dot(self.worldplane.T), t_i)
+				#print(dist_center)
+				if abs(dist_center) < 1e-15:
+					test_value = [0]
+					# Block most likely picked up by a neighboring chunk in its template. Decide who the block belongs to.
+					# The idea is, the block's origin is canonical (ie, the different templates will agree on it). Whichever
+					# chunk contains the origin can take ownership of the point.
+					#print("Got to 1st test")
+					if abs(dist_origin) < 1e-15:
+						#print("Got to 1st test")
+						# Origin doesn't work as tiebreak, go to first test point.
+						if abs(dist_testpoint) < 1e-15:
+							# First testpoint doesn't work as tiebreak; go to second testpoint.
+							#print("Got to 2nd test")
+							if abs(dist_testpoint2) < 1e-15:
+								# Second testpoint doesn't work either!!
+								#print("Got to 3rd test")
+								if abs(dist_testpoint3) < 1e-15:
+									#print("Got to 4th test")
+									if abs(dist_testpoint4) < 1e-15:
+										raise Exception(
+											"Unable to assign block to a specific chunk. Please add 5th test point.")
+									else:
+										test_value[0] = dist_testpoint4
+								else:
+									test_value[0] = dist_testpoint3
+							else:
+								test_value[0] = dist_testpoint2
+						else:
+							test_value[0] = dist_testpoint
+					else:
+						test_value[0] = dist_origin
+					# If test_value > 0, the block stays.
+					if test_value[0] < 0:
+						print(test_value[0])
+						to_skip.append(block_i)
+			print("Removing "+str(len(to_skip))+" blocks out of "+str(len(self.all_blocks[t_i][0])))
+			#self.all_blocks[t_i] = ([self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
+			#						   if block_i not in to_skip], self.all_blocks[t_i][1])
+
+		print("Removed dupes in templates.")
 		print(time.perf_counter() - starttime)
 
 		self.constraint_nums = [set(), set(), set(), set(), set(), set(), set(), set(), set(), set(),
@@ -1856,90 +1942,92 @@ class Chunk:
 		self.template_index = template_index
 		self.offset = offset
 		self.level = level
+		# TODO Easy to forget whether self.blocks holds straight template coords or coords with offset. Make the
+		#  mistake less easily made. Which *should* it be?
 		self.blocks = network.all_blocks[template_index][0]
 		# TODO TEMPORARY slow template fix
 		to_skip = []
-		for block_i in range(len(self.blocks)):
-
-			lowered_center = self.network.custom_pow(np.array(self.network.deflation_face_axes),
-													 self.level - 1).dot(
-				self.get_offset(level=self.level - 1) + self.blocks[block_i])
-			lowered_origin = self.network.custom_pow(
-				np.array(self.network.deflation_face_axes),
-				self.level - 1).dot(
-				self.get_offset(level=self.level - 1)+np.floor(self.blocks[block_i]))
-			block_axes = np.nonzero(self.blocks[block_i] - np.floor(self.blocks[block_i]))[0]
-			lowered_testpoint = self.network.custom_pow(
-				np.array(self.network.deflation_face_axes),
-				self.level - 1).dot(
-				self.get_offset(level=self.level - 1)+np.floor(self.blocks[block_i])
-				+ 0.8 * np.eye(6)[block_axes[0]]
-				+ 0.1 * np.eye(6)[block_axes[1]]
-				+ 0.1 * np.eye(6)[block_axes[2]])
-			lowered_testpoint2 = self.network.custom_pow(
-				np.array(self.network.deflation_face_axes),
-				self.level - 1).dot(
-				self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
-				+ 0.1 * np.eye(6)[block_axes[0]]
-				+ 0.8 * np.eye(6)[block_axes[1]]
-				+ 0.1 * np.eye(6)[block_axes[2]])
-			lowered_testpoint3 = self.network.custom_pow(
-				np.array(self.network.deflation_face_axes),
-				self.level - 1).dot(
-				self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
-				+ 0.1 * np.eye(6)[block_axes[0]]
-				+ 0.1 * np.eye(6)[block_axes[1]]
-				+ 0.8 * np.eye(6)[block_axes[2]])
-			lowered_testpoint4 = self.network.custom_pow(
-				np.array(self.network.deflation_face_axes),
-				self.level - 1).dot(
-				self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
-				+ 0.8 * np.eye(6)[block_axes[0]]
-				+ 0.8 * np.eye(6)[block_axes[1]]
-				+ 0.1 * np.eye(6)[block_axes[2]])
-			dist_center = self.rhomb_contains_point(lowered_center.dot(self.network.worldplane.T))
-			dist_origin = self.rhomb_contains_point(lowered_origin.dot(self.network.worldplane.T))
-			dist_testpoint = self.rhomb_contains_point(lowered_testpoint.dot(self.network.worldplane.T))
-			dist_testpoint2 = self.rhomb_contains_point(lowered_testpoint2.dot(self.network.worldplane.T))
-			dist_testpoint3 = self.rhomb_contains_point(lowered_testpoint3.dot(self.network.worldplane.T))
-			dist_testpoint4 = self.rhomb_contains_point(lowered_testpoint4.dot(self.network.worldplane.T))
-			test_value = None
-			if abs(dist_center) < 1e-15:
-				# Block most likely picked up by a neighboring chunk in its template. Decide who the block belongs to.
-				# The idea is, the block's origin is canonical (ie, the different templates will agree on it). Whichever
-				# chunk contains the origin can take ownership of the point.
-				if abs(dist_origin) < 1e-15:
-					# Origin doesn't work as tiebreak, go to first test point.
-					if abs(dist_testpoint) < 1e-15:
-						# First testpoint doesn't work as tiebreak; go to second testpoint.
-						#print()
-						#print(dist_testpoint)
-						#print(lowered_testpoint)
-						if abs(dist_testpoint2) < 1e-15:
-							# Second testpoint doesn't work either!!
-							#print(dist_testpoint2)
-							#print(lowered_testpoint2)
-							if abs(dist_testpoint3) < 1e-15:
-								#print(dist_testpoint3)
-								#print(lowered_testpoint3)
-								if abs(dist_testpoint4) < 1e-15:
-									#print(dist_testpoint4)
-									#print(lowered_testpoint4)
-									raise Exception("Unable to assign block to a specific chunk. Please add 5th test point.")
-								else:
-									test_value = dist_testpoint4
-							else:
-								test_value = dist_testpoint3
-						else:
-							test_value = dist_testpoint2
-					else:
-						test_value = dist_testpoint
-				else:
-					test_value = dist_origin
-				# If test_value > 0, the block stays.
-				if test_value < 0:
-					to_skip.append(block_i)
-		self.blocks = [self.blocks[i] for i in range(len(self.blocks)) if i not in to_skip]
+		# for block_i in range(len(self.blocks)):
+		#
+		# 	lowered_center = self.network.custom_pow(np.array(self.network.deflation_face_axes),
+		# 											 self.level - 1).dot(
+		# 		self.get_offset(level=self.level - 1) + self.blocks[block_i])
+		# 	lowered_origin = self.network.custom_pow(
+		# 		np.array(self.network.deflation_face_axes),
+		# 		self.level - 1).dot(
+		# 		self.get_offset(level=self.level - 1)+np.floor(self.blocks[block_i]))
+		# 	block_axes = np.nonzero(self.blocks[block_i] - np.floor(self.blocks[block_i]))[0]
+		# 	lowered_testpoint = self.network.custom_pow(
+		# 		np.array(self.network.deflation_face_axes),
+		# 		self.level - 1).dot(
+		# 		self.get_offset(level=self.level - 1)+np.floor(self.blocks[block_i])
+		# 		+ 0.8 * np.eye(6)[block_axes[0]]
+		# 		+ 0.1 * np.eye(6)[block_axes[1]]
+		# 		+ 0.1 * np.eye(6)[block_axes[2]])
+		# 	lowered_testpoint2 = self.network.custom_pow(
+		# 		np.array(self.network.deflation_face_axes),
+		# 		self.level - 1).dot(
+		# 		self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
+		# 		+ 0.1 * np.eye(6)[block_axes[0]]
+		# 		+ 0.8 * np.eye(6)[block_axes[1]]
+		# 		+ 0.1 * np.eye(6)[block_axes[2]])
+		# 	lowered_testpoint3 = self.network.custom_pow(
+		# 		np.array(self.network.deflation_face_axes),
+		# 		self.level - 1).dot(
+		# 		self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
+		# 		+ 0.1 * np.eye(6)[block_axes[0]]
+		# 		+ 0.1 * np.eye(6)[block_axes[1]]
+		# 		+ 0.8 * np.eye(6)[block_axes[2]])
+		# 	lowered_testpoint4 = self.network.custom_pow(
+		# 		np.array(self.network.deflation_face_axes),
+		# 		self.level - 1).dot(
+		# 		self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
+		# 		+ 0.8 * np.eye(6)[block_axes[0]]
+		# 		+ 0.8 * np.eye(6)[block_axes[1]]
+		# 		+ 0.1 * np.eye(6)[block_axes[2]])
+		# 	dist_center = self.rhomb_contains_point(lowered_center.dot(self.network.worldplane.T))
+		# 	dist_origin = self.rhomb_contains_point(lowered_origin.dot(self.network.worldplane.T))
+		# 	dist_testpoint = self.rhomb_contains_point(lowered_testpoint.dot(self.network.worldplane.T))
+		# 	dist_testpoint2 = self.rhomb_contains_point(lowered_testpoint2.dot(self.network.worldplane.T))
+		# 	dist_testpoint3 = self.rhomb_contains_point(lowered_testpoint3.dot(self.network.worldplane.T))
+		# 	dist_testpoint4 = self.rhomb_contains_point(lowered_testpoint4.dot(self.network.worldplane.T))
+		# 	test_value = None
+		# 	if abs(dist_center) < 1e-15:
+		# 		# Block most likely picked up by a neighboring chunk in its template. Decide who the block belongs to.
+		# 		# The idea is, the block's origin is canonical (ie, the different templates will agree on it). Whichever
+		# 		# chunk contains the origin can take ownership of the point.
+		# 		if abs(dist_origin) < 1e-15:
+		# 			# Origin doesn't work as tiebreak, go to first test point.
+		# 			if abs(dist_testpoint) < 1e-15:
+		# 				# First testpoint doesn't work as tiebreak; go to second testpoint.
+		# 				#print()
+		# 				#print(dist_testpoint)
+		# 				#print(lowered_testpoint)
+		# 				if abs(dist_testpoint2) < 1e-15:
+		# 					# Second testpoint doesn't work either!!
+		# 					#print(dist_testpoint2)
+		# 					#print(lowered_testpoint2)
+		# 					if abs(dist_testpoint3) < 1e-15:
+		# 						#print(dist_testpoint3)
+		# 						#print(lowered_testpoint3)
+		# 						if abs(dist_testpoint4) < 1e-15:
+		# 							#print(dist_testpoint4)
+		# 							#print(lowered_testpoint4)
+		# 							raise Exception("Unable to assign block to a specific chunk. Please add 5th test point.")
+		# 						else:
+		# 							test_value = dist_testpoint4
+		# 					else:
+		# 						test_value = dist_testpoint3
+		# 				else:
+		# 					test_value = dist_testpoint2
+		# 			else:
+		# 				test_value = dist_testpoint
+		# 		else:
+		# 			test_value = dist_origin
+		# 		# If test_value > 0, the block stays.
+		# 		if test_value < 0:
+		# 			to_skip.append(block_i)
+		# self.blocks = [self.blocks[i] for i in range(len(self.blocks)) if i not in to_skip]
 		self.block_values = np.zeros((len(self.blocks)), dtype=np.int)
 		# Block centers are neighbors if two dim.s differ by 0.5 and no others differ.
 		# TODO I've got to include neighbor information in the templates themselves.
@@ -1960,20 +2048,40 @@ class Chunk:
 
 	def get_parent(self):
 		if self.parent is None:
-			parents = self.network.generate_parents(self.template_index,self.offset,self.level)
+			parents = self.network.generate_parents(self.template_index, self.offset, self.level)#self.level
 			if len(parents) > 1:
 				raise Exception("Got more than one parents for a chunk; a way to handle this is currently not implemented.")
 			self.parent = Chunk(self.network, parents[0][0], parents[0][1], self.level+1)
 			# We have to set ourselves as a child, in the appropriate place
+			# TODO Below line took way to long to get right, for two reasons.
+			#  - It's easy to forget Chunk.blocks just stores default template positions, not adding in the chunk's
+			#    own offset.
+			#  - I should still make more utility functions; e.g., something for getting block axes and converting
+			#    arbitrary points between chunk level coords.
+			chunk_as_block_center = np.round(
+				(np.linalg.inv(self.network.deflation_face_axes)).dot(
+					self.network.chunk_center_lookup(self.template_index)
+					+ self.offset - self.parent.get_offset(self.level - 1)) * 2) / 2.0
 			for i in range(len(self.parent.blocks)):
-				if np.all(self.get_offset(self.level) - self.parent.get_offset(self.level)
-						  + np.round((self.network.chunk_center_lookup(self.template_index))
-											 .dot(np.array(self.network.deflation_face_axes).T)*2)/2# Use center, to differentiate
-						  == self.parent.blocks[i]):
+				if np.all(chunk_as_block_center == self.parent.blocks[i]):
 					self.parent.children[i] = self
 					self.index_in_parent = i
 					break
+			#TODO Convert into a test
 			print("Did block end up parent's child? "+str(self in self.parent.children))
+			if not self in self.parent.children:
+				print("Our offset:")
+				print(self.get_offset(self.level) - self.parent.get_offset(self.level)
+					  + (1 - self.network.chunk_center_lookup(self.template_index)
+					  - np.round(self.network.chunk_center_lookup(self.template_index))))
+				print(np.round(
+					(np.linalg.inv(self.network.deflation_face_axes)).dot(self.network.chunk_center_lookup(self.template_index) + self.offset) * 2) / 2.0)
+				print(np.round(
+					(np.linalg.inv(self.network.deflation_face_axes)).dot(self.network.chunk_center_lookup(self.template_index) ) * 2) / 2.0)
+				print("Estranged sibling offsets:")
+				for i in range(len(self.parent.blocks)):
+					print(self.parent.blocks[i])
+				raise Exception("Couldn't place self within new parent")
 			if self.is_topmost:
 				print("Adding new top chunk of level "+str(self.level+1))
 				self.is_topmost = False
@@ -1989,11 +2097,10 @@ class Chunk:
 		if not self.all_children_generated:
 			children = self.network.generate_children(self.template_index, self.offset, self.level)
 			if len(children) != len(self.blocks):
-				print("NOT FINDING TEMPLATES FOR EVERY CHILD")
+				print("MISMATCH BETWEEN CHILDREN AND TEMPLATES")
 				print("Children: "+str(len(self.blocks)))
 				print("Templates:"+str(len(children)))
-				raise Exception("Not finding templates for every child!")
-			for i in range(len(children)):
+			for i in range(len(self.children)):
 				if self.children[i] is None:
 					self.children[i] = Chunk(self.network, children[i][0], children[i][1], self.level-1)
 			self.all_children_generated = True
