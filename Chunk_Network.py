@@ -764,7 +764,11 @@ class Chunk_Network(MeshInstance):
 		'level', being assumed to give coordinates of the given chunk in terms
 		of blocks.
 		"""
-
+		# TODO My initial chunk templates, which I was using for months, had a lot of overlap between adjacent
+		#  templates. At first, when I had just begun writing any sort of visualization of the chunk hierarchy,
+		#  I was frequently getting two parents for a given chunk; however, more recently this has not happened once
+		#  in hundreds of tries. Technically this should be happening whenever there are chunks that overlap - so
+		#  what's happening? Why is this not finding every parent in inside blocks?
 		chosen_center = self.chunk_center_lookup(template_index)
 		ch3_member = np.ceil(chosen_center) - np.floor(chosen_center)
 
@@ -971,8 +975,9 @@ class Chunk_Network(MeshInstance):
 			#translated_seeds = (chunk_axes_inv_seed - proposed_origins).dot(self.normallel.T)
 			# TODO Maybe chunk_axes_inv_seed.dot(self.normallel.T) could be calculated more directly.
 			translated_seeds = chunk_axes_inv_seed.dot(self.normallel.T) - proposed_origins.dot(self.normallel.T)
-			a_hit = np.all([np.all(self.twoface_normals.dot(translated_seeds.T).T >= constraint[:, 0], axis=1),
-							np.all(self.twoface_normals.dot(translated_seeds.T).T <= constraint[:, 1], axis=1)], axis=0)
+			# Note, these tests used to be strict, but I added an epsilor
+			a_hit = np.all([np.all(self.twoface_normals.dot(translated_seeds.T).T - constraint[:, 0] >= -1e-14, axis=1),
+							np.all(self.twoface_normals.dot(translated_seeds.T).T - constraint[:, 1] <= 1e-14, axis=1)], axis=0)
 			if np.any(a_hit):
 				print("We're inside template #" + str(i) + ", at offset" + str(
 					block_offsets[np.array(np.nonzero(a_hit))[0, 0]]))
@@ -998,6 +1003,8 @@ class Chunk_Network(MeshInstance):
 							   axis=0)
 				if np.any(a_hit):
 					print("Some sort of neighbor block hit! ")
+					# TODO I think this is happening because of some glitch with my testpoint scheme for canonical
+					#  block assignment. Need to print a lot more test info here.
 					outside_hits = [(i, proposed_origins[j] + chunk_as_block_origin) for j in np.nonzero(a_hit)[0]]
 					break
 		hits = inside_hits + outside_hits
@@ -1281,7 +1288,7 @@ class Chunk_Network(MeshInstance):
 		print(time.perf_counter() - starttime)
 		print("Loading...")
 
-		self.load_templates_npy()
+		self.load_templates_npy("templates_test_point")
 		print("Done loading " + str(len(self.all_constraints)) + " templates")
 		print(time.perf_counter() - starttime)
 
@@ -1295,8 +1302,36 @@ class Chunk_Network(MeshInstance):
 		print("Created axes matrix lookup table")
 		print(time.perf_counter() - starttime)
 
+		self.constraint_nums = [set(), set(), set(), set(), set(), set(), set(), set(), set(), set(),
+								set(), set(), set(), set(), set()]
+		for i in range(len(self.all_constraints)):
+			for j in range(15):
+				self.constraint_nums[j] = self.constraint_nums[j].union(set(self.all_constraints[i][j]))
+		for i in range(15):
+			sorted = list(self.constraint_nums[i])
+			sorted.sort()
+			self.constraint_nums[i] = sorted
+
+		# Original, pre-simplification size of constraint_nums in each dimension:
+		# 400, 364, 574, 372, 395, 359, 504, 553, 382, 369, 470, 556, 404, 351, 359
+		# After 20 calls of self.simplify_constraints():
+		# 359, 315, 514, 336, 343, 325, 440, 509, 339, 338, 411, 500, 377, 328, 324
+
 		print("Removing duplicate blocks...")
 
+		# Checking for overlap with neighbors!
+		# This is doubtless slow, but I have to do it for now.
+		# OK, after the below testing, here are the facts:
+		# - Sadly, block centers do sometimes fall exactly on chunk boundaries. This is something I'd been hoping
+		#   was not true since it makes block ownership very ambiguous.
+		# - I tried testing the block's origin to "break the tie", and found that it, too, was sometimes on the
+		#   boundary, so no decision could be made.
+		# - Additionally, it should be noted that sometimes the origin is the same distance out from each chunk,
+		#   but that distance is about 0.236. Surely, this means the origin would fall in some other neighbor; but
+		#   I haven't verified that.
+		# - I tried introducing a 'test point', specifically (1, 0, 0) in the block's three axes, but this too
+		#   turned out to fall on the boundary some of the time, so didn't break all ties.
+		# - Introducing a second test point, (0, 1, 0), appears to break all ties.
 		def rhomb_contains_point(point, template_index, self = self):
 			level = 1
 			axes_matrix = self.axes_matrix_lookup[self.all_chosen_centers[template_index]][level]
@@ -1373,26 +1408,20 @@ class Chunk_Network(MeshInstance):
 						print(test_value[0])
 						to_skip.append(block_i)
 			print("Removing "+str(len(to_skip))+" blocks out of "+str(len(self.all_blocks[t_i][0])))
-			#self.all_blocks[t_i] = ([self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
-			#						   if block_i not in to_skip], self.all_blocks[t_i][1])
+			# We just shift it over to the "outside" list.
+			self.all_blocks[t_i] = ([self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
+									   if block_i not in to_skip], np.concatenate(
+									[self.all_blocks[t_i][1], [self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
+									   if block_i in to_skip]]))
 
 		print("Removed dupes in templates.")
 		print(time.perf_counter() - starttime)
-
-		self.constraint_nums = [set(), set(), set(), set(), set(), set(), set(), set(), set(), set(),
-								set(), set(), set(), set(), set()]
-		for i in range(len(self.all_constraints)):
-			for j in range(15):
-				self.constraint_nums[j] = self.constraint_nums[j].union(set(self.all_constraints[i][j]))
-		for i in range(15):
-			sorted = list(self.constraint_nums[i])
-			sorted.sort()
-			self.constraint_nums[i] = sorted
-
-		# Original, pre-simplification size of constraint_nums in each dimension:
-		# 400, 364, 574, 372, 395, 359, 504, 553, 382, 369, 470, 556, 404, 351, 359
-		# After 20 calls of self.simplify_constraints():
-		# 359, 315, 514, 336, 343, 325, 440, 509, 339, 338, 411, 500, 377, 328, 324
+		# Now that constraints have considerably less points, we probably need considerably less of them.
+		#self.test_templates(True)
+		#self.simplify_constraints()
+		#self.simplify_constraints()
+		#self.simplify_constraints()
+		#self.save_templates_npy("templates_test_point")
 
 		# TODO Could still try optimizing generation by pre-generating higher-level chunks --
 		#  e.g. making templates for supersuperchunks. But at this point it feels like that
@@ -1663,11 +1692,13 @@ class Chunk_Network(MeshInstance):
 							highest = -distance_to_corner
 		return highest
 
-	def test_templates(self):
+	def test_templates(self, remove_dupes = False):
 		starttime = time.perf_counter()
 		possible_blocks = set()
 		for blocklayout in self.all_blocks:
-			combined = np.concatenate([blocklayout[0], blocklayout[1]])
+			# combined = np.concatenate([blocklayout[0], blocklayout[1]])
+			# Right now all we care about is the inner blocks
+			combined = blocklayout[0]
 			combined = combined * 2
 			combined = np.array(np.round(combined), dtype=np.int64)
 			combined = [repr(list(x)) for x in combined]
@@ -1678,8 +1709,12 @@ class Chunk_Network(MeshInstance):
 
 		possible_layouts = []
 		blocklist = [eval(x) for x in possible_blocks]
-		for blocklayout in self.all_blocks:
-			combined = np.concatenate([blocklayout[0], blocklayout[1]])
+		novel_indices = []
+		for blocklayout_i in range(len(self.all_blocks)):
+			blocklayout = self.all_blocks[blocklayout_i]
+			#combined = np.concatenate([blocklayout[0], blocklayout[1]])
+			# Right now all we care about is the inner blocks
+			combined = blocklayout[0]
 			combined = np.round(combined * 2)
 			layout = np.any(
 				np.all(np.repeat(blocklist, len(combined), axis=0).reshape(-1, len(combined), 6) - combined == 0,
@@ -1688,12 +1723,17 @@ class Chunk_Network(MeshInstance):
 			for poss in possible_layouts:
 				if np.all(layout == poss):
 					novel = False
-					debugging.breakpoint()
+					#debugging.breakpoint()
 			if novel:
 				possible_layouts.append(layout)
+				novel_indices.append(blocklayout_i)
 		print("Number of unique layouts according to more careful calculation:")
 		print(len(possible_layouts))
 		print(time.perf_counter() - starttime)
+		if remove_dupes:
+			self.all_blocks = [self.all_blocks[i] for i in range(len(self.all_blocks)) if i in novel_indices]
+			self.all_constraints = [self.all_constraints[i] for i in range(len(self.all_constraints)) if i in novel_indices]
+			self.all_chosen_centers = [self.all_chosen_centers[i] for i in range(len(self.all_chosen_centers)) if i in novel_indices]
 
 	def symmetries_search(self):
 		# Interesting note: Though all constraints are unique, they consist
@@ -1940,98 +1980,15 @@ class Chunk:
 		self.is_topmost = False
 		self.network = network
 		self.template_index = template_index
-		self.offset = offset
+		self.offset = np.array(offset)
 		self.level = level
 		# TODO Easy to forget whether self.blocks holds straight template coords or coords with offset. Make the
 		#  mistake less easily made. Which *should* it be?
 		self.blocks = network.all_blocks[template_index][0]
-		# TODO TEMPORARY slow template fix
-		to_skip = []
-		# for block_i in range(len(self.blocks)):
-		#
-		# 	lowered_center = self.network.custom_pow(np.array(self.network.deflation_face_axes),
-		# 											 self.level - 1).dot(
-		# 		self.get_offset(level=self.level - 1) + self.blocks[block_i])
-		# 	lowered_origin = self.network.custom_pow(
-		# 		np.array(self.network.deflation_face_axes),
-		# 		self.level - 1).dot(
-		# 		self.get_offset(level=self.level - 1)+np.floor(self.blocks[block_i]))
-		# 	block_axes = np.nonzero(self.blocks[block_i] - np.floor(self.blocks[block_i]))[0]
-		# 	lowered_testpoint = self.network.custom_pow(
-		# 		np.array(self.network.deflation_face_axes),
-		# 		self.level - 1).dot(
-		# 		self.get_offset(level=self.level - 1)+np.floor(self.blocks[block_i])
-		# 		+ 0.8 * np.eye(6)[block_axes[0]]
-		# 		+ 0.1 * np.eye(6)[block_axes[1]]
-		# 		+ 0.1 * np.eye(6)[block_axes[2]])
-		# 	lowered_testpoint2 = self.network.custom_pow(
-		# 		np.array(self.network.deflation_face_axes),
-		# 		self.level - 1).dot(
-		# 		self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
-		# 		+ 0.1 * np.eye(6)[block_axes[0]]
-		# 		+ 0.8 * np.eye(6)[block_axes[1]]
-		# 		+ 0.1 * np.eye(6)[block_axes[2]])
-		# 	lowered_testpoint3 = self.network.custom_pow(
-		# 		np.array(self.network.deflation_face_axes),
-		# 		self.level - 1).dot(
-		# 		self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
-		# 		+ 0.1 * np.eye(6)[block_axes[0]]
-		# 		+ 0.1 * np.eye(6)[block_axes[1]]
-		# 		+ 0.8 * np.eye(6)[block_axes[2]])
-		# 	lowered_testpoint4 = self.network.custom_pow(
-		# 		np.array(self.network.deflation_face_axes),
-		# 		self.level - 1).dot(
-		# 		self.get_offset(level=self.level - 1) + np.floor(self.blocks[block_i])
-		# 		+ 0.8 * np.eye(6)[block_axes[0]]
-		# 		+ 0.8 * np.eye(6)[block_axes[1]]
-		# 		+ 0.1 * np.eye(6)[block_axes[2]])
-		# 	dist_center = self.rhomb_contains_point(lowered_center.dot(self.network.worldplane.T))
-		# 	dist_origin = self.rhomb_contains_point(lowered_origin.dot(self.network.worldplane.T))
-		# 	dist_testpoint = self.rhomb_contains_point(lowered_testpoint.dot(self.network.worldplane.T))
-		# 	dist_testpoint2 = self.rhomb_contains_point(lowered_testpoint2.dot(self.network.worldplane.T))
-		# 	dist_testpoint3 = self.rhomb_contains_point(lowered_testpoint3.dot(self.network.worldplane.T))
-		# 	dist_testpoint4 = self.rhomb_contains_point(lowered_testpoint4.dot(self.network.worldplane.T))
-		# 	test_value = None
-		# 	if abs(dist_center) < 1e-15:
-		# 		# Block most likely picked up by a neighboring chunk in its template. Decide who the block belongs to.
-		# 		# The idea is, the block's origin is canonical (ie, the different templates will agree on it). Whichever
-		# 		# chunk contains the origin can take ownership of the point.
-		# 		if abs(dist_origin) < 1e-15:
-		# 			# Origin doesn't work as tiebreak, go to first test point.
-		# 			if abs(dist_testpoint) < 1e-15:
-		# 				# First testpoint doesn't work as tiebreak; go to second testpoint.
-		# 				#print()
-		# 				#print(dist_testpoint)
-		# 				#print(lowered_testpoint)
-		# 				if abs(dist_testpoint2) < 1e-15:
-		# 					# Second testpoint doesn't work either!!
-		# 					#print(dist_testpoint2)
-		# 					#print(lowered_testpoint2)
-		# 					if abs(dist_testpoint3) < 1e-15:
-		# 						#print(dist_testpoint3)
-		# 						#print(lowered_testpoint3)
-		# 						if abs(dist_testpoint4) < 1e-15:
-		# 							#print(dist_testpoint4)
-		# 							#print(lowered_testpoint4)
-		# 							raise Exception("Unable to assign block to a specific chunk. Please add 5th test point.")
-		# 						else:
-		# 							test_value = dist_testpoint4
-		# 					else:
-		# 						test_value = dist_testpoint3
-		# 				else:
-		# 					test_value = dist_testpoint2
-		# 			else:
-		# 				test_value = dist_testpoint
-		# 		else:
-		# 			test_value = dist_origin
-		# 		# If test_value > 0, the block stays.
-		# 		if test_value < 0:
-		# 			to_skip.append(block_i)
-		# self.blocks = [self.blocks[i] for i in range(len(self.blocks)) if i not in to_skip]
 		self.block_values = np.zeros((len(self.blocks)), dtype=np.int)
 		# Block centers are neighbors if two dim.s differ by 0.5 and no others differ.
 		# TODO I've got to include neighbor information in the templates themselves.
-		# TODO It would save about 2.7 milliseconds/chunk, which is 97% of the children generation time.
+		#  It would save about 2.7 milliseconds/chunk, which is 97% of the children generation time.
 		repeated = np.repeat([self.blocks], len(self.blocks), axis=0)
 		diffs = np.abs(repeated - np.transpose(repeated, (1,0,2)))
 		diffs_of_half = diffs == 0.5
@@ -2081,7 +2038,37 @@ class Chunk:
 				print("Estranged sibling offsets:")
 				for i in range(len(self.parent.blocks)):
 					print(self.parent.blocks[i])
-				raise Exception("Couldn't place self within new parent")
+				# Probably, an "outside block" hit got return from generate_parents. We can try to recover by finding
+				# a grandparent which can contain both.
+				if self.is_topmost:
+					print("Adding new top chunk of level " + str(self.level + 1))
+					self.is_topmost = False
+					self.parent.is_topmost = True
+					self.network.highest_chunk = self.parent
+				grandparent = self.parent.get_parent()
+				old_parent = self.parent
+				avunculars = grandparent.get_children()
+				found_parent = False
+				for a in avunculars:
+					#TODO There's always a chance a grandparent won't be enough and we'd have to go to great
+					# grandparent etc. I could (a) code a recursive solution, assuring myself it would happen rarely,
+					# (b) use neighbor information to see ahead of time if that's what will happen, generating a
+					# more minimal set of parents, or (c) figure out why all of this is happening in the first place
+					# and prevent it.
+					chunk_as_block_center = np.round((np.linalg.inv(self.network.deflation_face_axes)).dot(
+							self.network.chunk_center_lookup(self.template_index)
+							+ self.offset - a.get_offset(self.level - 1)) * 2) / 2.0
+					for i in range(len(a.blocks)):
+						if np.all(chunk_as_block_center == a.blocks[i]):
+							print("Found our real parent!")
+							self.parent = a
+							self.parent.children[i] = self
+							self.index_in_parent = i
+							break
+					if found_parent:
+						break
+				if not found_parent:
+					print("Warning: Unable to place chunk amongst parent's siblings.")
 			if self.is_topmost:
 				print("Adding new top chunk of level "+str(self.level+1))
 				self.is_topmost = False
@@ -2128,21 +2115,6 @@ class Chunk:
 						child.draw_mesh()
 			if self.level == 1 and not self.drawn:
 				self.draw_mesh()
-			# Checking for overlap with neighbors!
-			# This is doubtless slow, but I have to do it for now.
-			# OK, after the below testing, here are the facts:
-			# - Sadly, block centers do sometimes fall exactly on chunk boundaries. This is something I'd been hoping
-			#   was not true since it makes block ownership very ambiguous.
-			# - I tried testing the block's origin to "break the tie", and found that it, too, was sometimes on the
-			#   boundary, so no decision could be made.
-			# - Additionally, it should be noted that sometimes the origin is the same distance out from each chunk,
-			#   but that distance is about 0.236. Surely, this means the origin would fall in some other neighbor; but
-			#   I haven't verified that.
-			# - I tried introducing a 'test point', specifically (1, 0, 0) in the block's three axes, but this too
-			#   turned out to fall on the boundary some of the time, so didn't break all ties.
-			# - Introducing a second test point, (0, 1, 0), appears to break all ties.
-			# TODO So, the tiebreakers can be used to unambiguously assign the block to one parent or another. I need
-			#  to bake this strategy into my chunk templates, removing blocks according to each successive tiebreak.
 			# TODO Don't just scrap below code; alter it to detect and store block neighbors across chunk boundaries.
 			if self.parent is not None:
 				neighbor_indices = np.nonzero(self.parent.blocks_neighbor[self.index_in_parent])[0]
@@ -2480,6 +2452,7 @@ class Chunk:
 									+ "\nChunk offset: "+str(self.get_offset(level=0))
 									+ "\nClosest child was "+str(-priority_list[sorted_indices[0]])+" away."
 									+ "\nChild offset: "+str(child_list[sorted_indices[0]].get_offset(level=0)))
+
 					return [self]
 				else:
 					# Some child must contain the point, but it apparently hasn't been generated yet; this chunk is the

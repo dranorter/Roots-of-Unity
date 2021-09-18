@@ -8,5 +8,5 @@ func _ready():
 
 func _process(delta):
 	if playing == false:
-		if randf() < 0.001*delta:
+		if randf() < 0.0001*delta:
 			playing = true
