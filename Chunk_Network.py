@@ -1301,6 +1301,7 @@ class Chunk_Network(MeshInstance):
         print(time.perf_counter() - starttime)
 
         # Lookup table for Chunk.rhomb_contains_point
+        # As the level goes up, these are merely rescaled.
         self.axes_matrix_lookup = {center: [np.linalg.inv(
             self.worldplane.T[np.nonzero(
                 self.possible_centers_live[self.possible_centers.index(center)]
@@ -1349,8 +1350,24 @@ class Chunk_Network(MeshInstance):
 
             # We'll use the center of each block, and a test vector. If a block center is on a chunk boundary, the test
             # vector points towards the chunk which will take ownership. We just need a test vector which is not
-            # parallel to any of the edges in the lattice.
-            test_vector = np.array([1,1,1,0,0,0]).dot(self.worldplane.T)
+            # parallel to any of the edges or faces in the lattice.
+
+            # First idea: we want to point along the long axis of a prolate rhombohedron. Won't work: this is paralles
+            #  to the face of (I believe) a prolate rhombohedron which shares 1 of the edge directions.
+
+
+            test_vector = np.array([1,1,2])#np.array([1,1,1,0,0,0]).dot(self.worldplane.T)
+            print("Example axes matrix")
+            print(self.axes_matrix_lookup[self.all_chosen_centers[2665]][1])
+            print("Test vector in example chunk axes")
+            print(test_vector.dot(self.axes_matrix_lookup[self.all_chosen_centers[2665]][1]))
+
+            # It seems (tho, after very few tests) that an epsilon value of 2e-15 is too high, and still produces
+            # overlap bettween chunks. An epsilon value of 1e-15 is too low, and still produces holes.
+            epsilon = 2e-13
+            # The block centers themselves are purely half-integer 6D values, so either the projection to 3D or the
+            # conversion into the chunk axes is introducing enough error that, apparently, on-boundary and off-boundary
+            # cannot be strictly differentiated with an epsilon test.
 
             def rhomb_contains_point(point, template_index, self=self):
                 level = 1
@@ -1375,14 +1392,14 @@ class Chunk_Network(MeshInstance):
                 target_coords_in_chunk_axes = np.array(point).dot(axes_matrix) - 0.5
                 dist_from_center = np.abs(target_coords_in_chunk_axes)
                 #TODO The epsilons here could easily be causing trouble...
-                if np.max(dist_from_center) > 0.5 + 2e-15:
+                if np.max(dist_from_center) > 0.5 + epsilon:
                     # It's outside the chunk
                     return -1
-                if np.max(dist_from_center) < 0.5 - 2e-15:
+                if np.max(dist_from_center) < 0.5 - epsilon:
                     # It's inside the chunk
                     return 0
                 # It's on the boundary, so the return value is just the count of on-boundary axes.
-                return np.sum(np.abs(dist_from_center - 0.5) <= 2e-15)
+                return np.sum(np.abs(dist_from_center - 0.5) <= epsilon)
 
             for t_i in range(len(self.all_blocks)):
                 to_skip = []
@@ -1405,7 +1422,7 @@ class Chunk_Network(MeshInstance):
                         # Intersects on a face. We need to see if our test vector points into the face or out of it.
                         test_vector_in_chunk_axes = test_vector.dot(axes_matrix)
                         # Which chunk axis is this face on?
-                        face_index = np.nonzero(np.all(np.array([dist_from_center > 0.5 - 2e-15, dist_from_center < 0.5 + 2e-15]),axis=0))[0][0]
+                        face_index = np.nonzero(np.all(np.array([dist_from_center >= 0.5 - epsilon, dist_from_center <= 0.5 + epsilon]),axis=0))[0][0]
                         # Which direction is the face?
                         face_sign = np.sign(target_coords_in_chunk_axes[face_index])
 
@@ -1420,14 +1437,14 @@ class Chunk_Network(MeshInstance):
                         # into both adjacent faces.
                         test_vector_in_chunk_axes = test_vector.dot(axes_matrix)
                         # Which chunk axis is this face on?
-                        face_indices = np.nonzero(np.all(np.array([dist_from_center > 0.5 - 2e-15, dist_from_center < 0.5 + 2e-15]),axis=0))[0][0]
+                        face_indices = np.nonzero(np.all(np.array([dist_from_center >= 0.5 - epsilon, dist_from_center <= 0.5 + epsilon]),axis=0))[0]
                         if len(face_indices) != 2:
                             raise Exception("You need to take a closer look at your code.")
                         face_tests = []
                         for face_i in face_indices:
                             # Which direction is the face?
                             face_sign = np.sign(target_coords_in_chunk_axes[face_i])
-                            if test_vector_in_chunk_axes[face_index] * face_sign > 0:
+                            if test_vector_in_chunk_axes[face_i] * face_sign > 0:
                                 # Test vector points out of this face, so, out of chunk.
                                 face_tests.append(False)
                             else:
@@ -2406,15 +2423,75 @@ class Chunk:
                                     if child.template_index == neighbor_child.template_index:
                                         if np.all(child.offset == neighbor_child.offset):
                                             print(
-                                                "Warning: Duplicate chunk found. Mending network... This will create a loop...")
+                                                "Warning: Duplicate chunk found. Mending network... \n\tThis won't actually work...")
                                             # TODO Below code was written while trying to figure out how to handle this; it makes
                                             #  all the pertinent measurements and yet doesn't assign the child to a unique parent.
                                             #  Get rid of or fix. Fixing would require support for empty slots in che children array
                                             #  even when all_children_generated == True.
-                                            # print("Guilty templates: ")
-                                            # print(self.template_index)
-                                            # print(neighbor.template_index)
-                                            # print("Containment values:")
+                                            print("Guilty templates: ")
+                                            print(self.template_index)
+                                            print(neighbor.template_index)
+                                            print("Chunk's position in each parent:")
+                                            np.set_printoptions(precision=None)
+
+                                            #test_vector = np.array([1, 1, 1, 0, 0, 0]).dot(self.network.worldplane.T)
+                                            test_vector = np.array([1,1,2])
+                                            epsilon = 2e-15
+                                            child_center = self.network.all_blocks[self.template_index][0][child_i]
+                                            neighbor_child_center = self.network.all_blocks[neighbor.template_index][0][neighbor_child_i]
+                                            level = 1
+                                            axes_matrix = self.network.axes_matrix_lookup[self.network.all_chosen_centers[self.template_index]][level]
+                                            neighbor_axes_matrix = self.network.axes_matrix_lookup[self.network.all_chosen_centers[neighbor.template_index]][level]
+                                            child_center_in_world = child_center.dot(self.network.worldplane.T)
+                                            neighbor_child_center_in_world = neighbor_child_center.dot(self.network.worldplane.T)
+                                            child_center_in_chunk_axes = np.array(child_center_in_world).dot(axes_matrix) - 0.5
+                                            neighbor_child_center_in_chunk_axes = np.array(neighbor_child_center_in_world).dot(
+                                                neighbor_axes_matrix) - 0.5
+                                            print(child_center_in_chunk_axes)
+                                            print(neighbor_child_center_in_chunk_axes)
+
+                                            child_dist_from_center = np.abs(child_center_in_chunk_axes)
+                                            neighbor_child_dist_from_center = np.abs(neighbor_child_center_in_chunk_axes)
+                                            test_vector_in_chunk_axes = test_vector.dot(axes_matrix)
+                                            test_vector_in_neighbor_chunk_axes = test_vector.dot(neighbor_axes_matrix)
+
+                                            print("Ownership calc from current chunk:")
+                                            print(test_vector_in_chunk_axes)
+                                            face_indices = np.nonzero(np.all(np.array(
+                                                [child_dist_from_center >= 0.5 - epsilon, child_dist_from_center <= 0.5 + epsilon]),
+                                                                             axis=0))[0]
+                                            face_tests = []
+                                            for face_i in face_indices:
+                                                # Which direction is the face?
+                                                face_sign = np.sign(child_center_in_chunk_axes[face_i])
+                                                if test_vector_in_chunk_axes[face_i] * face_sign > 0:
+                                                    # Test vector points out of this face, so, out of chunk.
+                                                    face_tests.append(False)
+                                                else:
+                                                    face_tests.append(True)
+
+                                            print(face_indices)
+                                            print(face_tests)
+
+                                            print("Ownership calc from neighbor chunk:")
+                                            print(test_vector_in_neighbor_chunk_axes)
+                                            face_indices = np.nonzero(np.all(np.array(
+                                                [neighbor_child_dist_from_center >= 0.5 - epsilon,
+                                                 neighbor_child_dist_from_center <= 0.5 + epsilon]),
+                                                axis=0))[0]
+                                            face_tests = []
+                                            for face_i in face_indices:
+                                                # Which direction is the face?
+                                                face_sign = np.sign(neighbor_child_center_in_chunk_axes[face_i])
+                                                if test_vector_in_neighbor_chunk_axes[face_i] * face_sign > 0:
+                                                    # Test vector points out of this face, so, out of chunk.
+                                                    face_tests.append(False)
+                                                else:
+                                                    face_tests.append(True)
+
+                                            print(face_indices)
+                                            print(face_tests)
+
                                             lowered_center = self.network.custom_pow(
                                                 np.array(self.network.deflation_face_axes),
                                                 self.level - 1).dot(
