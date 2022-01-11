@@ -1346,6 +1346,12 @@ class Chunk_Network(MeshInstance):
             #  can fall outside some chunk (X) but on the boundary of another (Y). Then, the second test point (origin) can
             #  fall within the first chunk (X). Both chunks will then deny ownership of the block.
             # So, time for a new scheme.
+
+            # We'll use the center of each block, and a test vector. If a block center is on a chunk boundary, the test
+            # vector points towards the chunk which will take ownership. We just need a test vector which is not
+            # parallel to any of the edges in the lattice.
+            test_vector = np.array([1,1,1,0,0,0]).dot(self.worldplane.T)
+
             def rhomb_contains_point(point, template_index, self=self):
                 level = 1
                 axes_matrix = self.axes_matrix_lookup[self.all_chosen_centers[template_index]][level]
@@ -1354,80 +1360,171 @@ class Chunk_Network(MeshInstance):
                 dist_from_center = np.abs(target_coords_in_chunk_axes)
                 return np.min(0.5 - dist_from_center)
 
+
+            def intersection_type(point, template_index, self=self):
+                """
+                Returns -1 if the point is outside the chunk; 0 if it is in the interion; 1 if it is on a face;
+                2 if it is on an edge; and 3 if it is on a vertex.
+                :param point: The point to test
+                :param template_index: The template index of the chunk
+                :param self: The chunk network providing template data
+                :return: An integer, between -1 and 3 inclusive.
+                """
+                level = 1
+                axes_matrix = self.axes_matrix_lookup[self.all_chosen_centers[template_index]][level]
+                target_coords_in_chunk_axes = np.array(point).dot(axes_matrix) - 0.5
+                dist_from_center = np.abs(target_coords_in_chunk_axes)
+                #TODO The epsilons here could easily be causing trouble...
+                if np.max(dist_from_center) > 0.5 + 2e-15:
+                    # It's outside the chunk
+                    return -1
+                if np.max(dist_from_center) < 0.5 - 2e-15:
+                    # It's inside the chunk
+                    return 0
+                # It's on the boundary, so the return value is just the count of on-boundary axes.
+                return np.sum(np.abs(dist_from_center - 0.5) <= 2e-15)
+
             for t_i in range(len(self.all_blocks)):
                 to_skip = []
                 blocks = self.all_blocks[t_i][0]
                 for block_i in range(len(self.all_blocks[t_i][0])):
                     center = blocks[block_i]
-                    origin = np.floor(blocks[block_i])
-                    axes = np.nonzero(blocks[block_i] - np.floor(blocks[block_i]))[0]
-                    testpoint = (np.floor(blocks[block_i])
-                                 + 0.8 * np.eye(6)[axes[0]]
-                                 + 0.1 * np.eye(6)[axes[1]]
-                                 + 0.1 * np.eye(6)[axes[2]])
-                    testpoint2 = (
-                            np.floor(blocks[block_i])
-                            + 0.1 * np.eye(6)[axes[0]]
-                            + 0.8 * np.eye(6)[axes[1]]
-                            + 0.1 * np.eye(6)[axes[2]])
-                    testpoint3 = (
-                            np.floor(blocks[block_i])
-                            + 0.1 * np.eye(6)[axes[0]]
-                            + 0.1 * np.eye(6)[axes[1]]
-                            + 0.8 * np.eye(6)[axes[2]])
-                    testpoint4 = (
-                            np.floor(blocks[block_i])
-                            + 0.8 * np.eye(6)[axes[0]]
-                            + 0.8 * np.eye(6)[axes[1]]
-                            + 0.1 * np.eye(6)[axes[2]])
-                    dist_center = rhomb_contains_point(center.dot(self.worldplane.T), t_i)
-                    dist_origin = rhomb_contains_point(origin.dot(self.worldplane.T), t_i)
-                    dist_testpoint = rhomb_contains_point(testpoint.dot(self.worldplane.T), t_i)
-                    dist_testpoint2 = rhomb_contains_point(testpoint2.dot(self.worldplane.T), t_i)
-                    dist_testpoint3 = rhomb_contains_point(testpoint3.dot(self.worldplane.T), t_i)
-                    dist_testpoint4 = rhomb_contains_point(testpoint4.dot(self.worldplane.T), t_i)
-                    # print(dist_center)
-                    if abs(dist_center) < 1e-15:
-                        test_value = [0]
-                        # Block most likely picked up by a neighboring chunk in its template. Decide who the block belongs to.
-                        # The idea is, the block's origin is canonical (ie, the different templates will agree on it). Whichever
-                        # chunk contains the origin can take ownership of the point.
-                        # print("Got to 1st test")
-                        if abs(dist_origin) < 1e-15:
-                            # print("Got to 1st test")
-                            # Origin doesn't work as tiebreak, go to first test point.
-                            if abs(dist_testpoint) < 1e-15:
-                                # First testpoint doesn't work as tiebreak; go to second testpoint.
-                                # print("Got to 2nd test")
-                                if abs(dist_testpoint2) < 1e-15:
-                                    # Second testpoint doesn't work either!!
-                                    # print("Got to 3rd test")
-                                    if abs(dist_testpoint3) < 1e-15:
-                                        # print("Got to 4th test")
-                                        if abs(dist_testpoint4) < 1e-15:
-                                            raise Exception(
-                                                "Unable to assign block to a specific chunk. Please add 5th test point.")
-                                        else:
-                                            test_value[0] = dist_testpoint4
-                                    else:
-                                        test_value[0] = dist_testpoint3
-                                else:
-                                    test_value[0] = dist_testpoint2
-                            else:
-                                test_value[0] = dist_testpoint
-                        else:
-                            test_value[0] = dist_origin
-                        # If test_value > 0, the block stays.
-                        if test_value[0] < 0:
-                            print(test_value[0])
+                    level = 1
+                    axes_matrix = self.axes_matrix_lookup[self.all_chosen_centers[t_i]][level]
+                    center_in_world = center.dot(self.worldplane.T)
+                    target_coords_in_chunk_axes = np.array(center_in_world).dot(axes_matrix) - 0.5
+                    dist_from_center = np.abs(target_coords_in_chunk_axes)
+                    intersection = intersection_type(center.dot(self.worldplane.T), t_i)
+                    if intersection ==  -1:
+                        # A block whose center lies outside of us is definitely skipped.
+                        to_skip.append(block_i)
+                    elif intersection == 0:
+                        # A block whose center lies inside is definitely not skipped
+                        pass
+                    elif intersection == 1:
+                        # Intersects on a face. We need to see if our test vector points into the face or out of it.
+                        test_vector_in_chunk_axes = test_vector.dot(axes_matrix)
+                        # Which chunk axis is this face on?
+                        face_index = np.nonzero(np.all(np.array([dist_from_center > 0.5 - 2e-15, dist_from_center < 0.5 + 2e-15]),axis=0))[0][0]
+                        # Which direction is the face?
+                        face_sign = np.sign(target_coords_in_chunk_axes[face_index])
+
+                        if test_vector_in_chunk_axes[face_index]*face_sign > 0:
+                            # Test vector points out of face; the other chunk will take responsibility.
                             to_skip.append(block_i)
+                        else:
+                            # We keep this one.
+                            pass
+                    elif intersection == 2:
+                        # Intersection on an edge. We'll claim the block if the test vector points into the edge; IE,
+                        # into both adjacent faces.
+                        test_vector_in_chunk_axes = test_vector.dot(axes_matrix)
+                        # Which chunk axis is this face on?
+                        face_indices = np.nonzero(np.all(np.array([dist_from_center > 0.5 - 2e-15, dist_from_center < 0.5 + 2e-15]),axis=0))[0][0]
+                        if len(face_indices) != 2:
+                            raise Exception("You need to take a closer look at your code.")
+                        face_tests = []
+                        for face_i in face_indices:
+                            # Which direction is the face?
+                            face_sign = np.sign(target_coords_in_chunk_axes[face_i])
+                            if test_vector_in_chunk_axes[face_index] * face_sign > 0:
+                                # Test vector points out of this face, so, out of chunk.
+                                face_tests.append(False)
+                            else:
+                                face_tests.append(True)
+                        if np.all(face_tests):
+                            # Test vector points into edge; this one's ours.
+                            pass
+                        else:
+                            # A different chunk along this edge will take this block.
+                            to_skip.append(block_i)
+                    elif intersection == 3:
+                        raise Exception(
+                            "Test point was on chunk corner. Did you use a block corner as a test point? Or did something else go wrong?")
+
                 print("Removing " + str(len(to_skip)) + " blocks out of " + str(len(self.all_blocks[t_i][0])))
                 # We just shift it over to the "outside" list.
                 self.all_blocks[t_i] = ([self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
-                                         if block_i not in to_skip], np.concatenate(
-                    [self.all_blocks[t_i][1],
-                     [self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
-                      if block_i in to_skip]]))
+                                         if block_i not in to_skip], np.concatenate([self.all_blocks[t_i][1],
+                      [self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
+                       if block_i in to_skip]]))
+            #
+            #
+            #
+            # for t_i in range(len(self.all_blocks)):
+            #     to_skip = []
+            #     blocks = self.all_blocks[t_i][0]
+            #     for block_i in range(len(self.all_blocks[t_i][0])):
+            #         center = blocks[block_i]
+            #         origin = np.floor(blocks[block_i])
+            #         axes = np.nonzero(blocks[block_i] - np.floor(blocks[block_i]))[0]
+            #         testpoint = (np.floor(blocks[block_i])
+            #                      + 0.8 * np.eye(6)[axes[0]]
+            #                      + 0.1 * np.eye(6)[axes[1]]
+            #                      + 0.1 * np.eye(6)[axes[2]])
+            #         testpoint2 = (
+            #                 np.floor(blocks[block_i])
+            #                 + 0.1 * np.eye(6)[axes[0]]
+            #                 + 0.8 * np.eye(6)[axes[1]]
+            #                 + 0.1 * np.eye(6)[axes[2]])
+            #         testpoint3 = (
+            #                 np.floor(blocks[block_i])
+            #                 + 0.1 * np.eye(6)[axes[0]]
+            #                 + 0.1 * np.eye(6)[axes[1]]
+            #                 + 0.8 * np.eye(6)[axes[2]])
+            #         testpoint4 = (
+            #                 np.floor(blocks[block_i])
+            #                 + 0.8 * np.eye(6)[axes[0]]
+            #                 + 0.8 * np.eye(6)[axes[1]]
+            #                 + 0.1 * np.eye(6)[axes[2]])
+            #         dist_center = rhomb_contains_point(center.dot(self.worldplane.T), t_i)
+            #         dist_origin = rhomb_contains_point(origin.dot(self.worldplane.T), t_i)
+            #         dist_testpoint = rhomb_contains_point(testpoint.dot(self.worldplane.T), t_i)
+            #         dist_testpoint2 = rhomb_contains_point(testpoint2.dot(self.worldplane.T), t_i)
+            #         dist_testpoint3 = rhomb_contains_point(testpoint3.dot(self.worldplane.T), t_i)
+            #         dist_testpoint4 = rhomb_contains_point(testpoint4.dot(self.worldplane.T), t_i)
+            #         # print(dist_center)
+            #         if abs(dist_center) < 1e-15:
+            #             test_value = [0]
+            #             # Block most likely picked up by a neighboring chunk in its template. Decide who the block belongs to.
+            #             # The idea is, the block's origin is canonical (ie, the different templates will agree on it). Whichever
+            #             # chunk contains the origin can take ownership of the point.
+            #             # print("Got to 1st test")
+            #             if abs(dist_origin) < 1e-15:
+            #                 # print("Got to 1st test")
+            #                 # Origin doesn't work as tiebreak, go to first test point.
+            #                 if abs(dist_testpoint) < 1e-15:
+            #                     # First testpoint doesn't work as tiebreak; go to second testpoint.
+            #                     # print("Got to 2nd test")
+            #                     if abs(dist_testpoint2) < 1e-15:
+            #                         # Second testpoint doesn't work either!!
+            #                         # print("Got to 3rd test")
+            #                         if abs(dist_testpoint3) < 1e-15:
+            #                             # print("Got to 4th test")
+            #                             if abs(dist_testpoint4) < 1e-15:
+            #                                 raise Exception(
+            #                                     "Unable to assign block to a specific chunk. Please add 5th test point.")
+            #                             else:
+            #                                 test_value[0] = dist_testpoint4
+            #                         else:
+            #                             test_value[0] = dist_testpoint3
+            #                     else:
+            #                         test_value[0] = dist_testpoint2
+            #                 else:
+            #                     test_value[0] = dist_testpoint
+            #             else:
+            #                 test_value[0] = dist_origin
+            #             # If test_value > 0, the block stays.
+            #             if test_value[0] < 0:
+            #                 print(test_value[0])
+            #                 to_skip.append(block_i)
+            #     print("Removing " + str(len(to_skip)) + " blocks out of " + str(len(self.all_blocks[t_i][0])))
+            #     # We just shift it over to the "outside" list.
+            #     self.all_blocks[t_i] = ([self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
+            #                              if block_i not in to_skip], np.concatenate(
+            #         [self.all_blocks[t_i][1],
+            #          [self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
+            #           if block_i in to_skip]]))
 
             print("Removed dupes in templates.")
             print(time.perf_counter() - starttime)
@@ -2542,7 +2639,7 @@ class Chunk:
             print("Generating all children: ")
             while len(new_children) > 0:
                 # There will often be many hundreds, so we print 1% of the time
-                if random() < 0.01:
+                if r.random() < 0.01:
                     print(len(new_children))
                 new_child = new_children.pop()
                 if new_child.level > self.level:
