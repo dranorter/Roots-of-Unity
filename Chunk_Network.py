@@ -1007,10 +1007,39 @@ class Chunk_Network(MeshInstance):
                                axis=0)
                 if np.any(a_hit):
                     print("Some sort of neighbor block hit! ")
-                    # TODO I think this is happening because of some glitch with my testpoint scheme for canonical
-                    #  block assignment. Need to print a lot more test info here.
-                    outside_hits = [(i, proposed_origins[j] + chunk_as_block_origin) for j in np.nonzero(a_hit)[0]]
-                    break
+                    # TODO Need to print a lot more test info here.
+                    # Really, there can only be one hit here because we're looking at one template index i.
+
+                    test_vector = np.array([1,1,2])
+                    epsilon = 2e-15
+                    center = aligned_blocks[np.nonzero(a_hit)[0][0]]
+                    level = 1
+                    axes_matrix = self.axes_matrix_lookup[self.all_chosen_centers[i]][level]
+                    center_in_world = center.dot(self.worldplane.T)
+                    target_coords_in_chunk_axes = np.array(center_in_world).dot(axes_matrix) - 0.5
+                    dist_from_center = np.abs(target_coords_in_chunk_axes)
+                    test_vector_in_chunk_axes = test_vector.dot(axes_matrix)
+                    # Which chunk axis is this face on?
+                    face_indices = np.nonzero(
+                        np.all(np.array([dist_from_center >= 0.5 - epsilon, dist_from_center <= 0.5 + epsilon]),
+                               axis=0))[0]
+                    face_tests = []
+                    for face_i in face_indices:
+                        # Which direction is the face?
+                        face_sign = np.sign(target_coords_in_chunk_axes[face_i])
+                        if test_vector_in_chunk_axes[face_i] * face_sign > 0:
+                            # Test vector points out of this face, so, out of chunk.
+                            face_tests.append(False)
+                        else:
+                            face_tests.append(True)
+                    print("Template: "+str(i))
+                    print(target_coords_in_chunk_axes)
+                    print(test_vector_in_chunk_axes)
+                    print(face_indices)
+                    print(face_tests)
+
+                    outside_hits += [(i, proposed_origins[j] + chunk_as_block_origin) for j in np.nonzero(a_hit)[0]]
+                    #break
         hits = inside_hits + outside_hits
         print("Found " + str(len(hits)) + " possible superchunks.")
         if len(hits) == 0:
@@ -1364,10 +1393,13 @@ class Chunk_Network(MeshInstance):
 
             # It seems (tho, after very few tests) that an epsilon value of 2e-15 is too high, and still produces
             # overlap bettween chunks. An epsilon value of 1e-15 is too low, and still produces holes.
-            epsilon = 2e-13
+            epsilon = 2e-15
             # The block centers themselves are purely half-integer 6D values, so either the projection to 3D or the
             # conversion into the chunk axes is introducing enough error that, apparently, on-boundary and off-boundary
             # cannot be strictly differentiated with an epsilon test.
+            # Update: found no values occurring between 1e-15 and 0.001. So the epsilon test is fine, and the problem
+            # lies elsewhere. The fact that I'm getting both holes and overlap suggests the algorithm is basically
+            # flawed or I've made some typo in implementing it.
 
             def rhomb_contains_point(point, template_index, self=self):
                 level = 1
@@ -1391,7 +1423,9 @@ class Chunk_Network(MeshInstance):
                 axes_matrix = self.axes_matrix_lookup[self.all_chosen_centers[template_index]][level]
                 target_coords_in_chunk_axes = np.array(point).dot(axes_matrix) - 0.5
                 dist_from_center = np.abs(target_coords_in_chunk_axes)
-                #TODO The epsilons here could easily be causing trouble...
+                if abs(np.max(dist_from_center)-0.5) > 1e-15:
+                    if abs(np.max(dist_from_center)-0.5) < 0.001:
+                        print(np.max(dist_from_center)-0.5)
                 if np.max(dist_from_center) > 0.5 + epsilon:
                     # It's outside the chunk
                     return -1
@@ -1403,8 +1437,8 @@ class Chunk_Network(MeshInstance):
 
             for t_i in range(len(self.all_blocks)):
                 to_skip = []
-                blocks = self.all_blocks[t_i][0]
-                for block_i in range(len(self.all_blocks[t_i][0])):
+                blocks = np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])
+                for block_i in range(len(blocks)):
                     center = blocks[block_i]
                     level = 1
                     axes_matrix = self.axes_matrix_lookup[self.all_chosen_centers[t_i]][level]
@@ -1412,6 +1446,7 @@ class Chunk_Network(MeshInstance):
                     target_coords_in_chunk_axes = np.array(center_in_world).dot(axes_matrix) - 0.5
                     dist_from_center = np.abs(target_coords_in_chunk_axes)
                     intersection = intersection_type(center.dot(self.worldplane.T), t_i)
+
                     if intersection ==  -1:
                         # A block whose center lies outside of us is definitely skipped.
                         to_skip.append(block_i)
@@ -1433,8 +1468,11 @@ class Chunk_Network(MeshInstance):
                             # We keep this one.
                             pass
                     elif intersection == 2:
+                        print("Encountered a block center on an edge.")
                         # Intersection on an edge. We'll claim the block if the test vector points into the edge; IE,
                         # into both adjacent faces.
+                        # NOTE: This apparently does not ever happen. I should satisfy myself that it's mathematically
+                        # impossible and then remove the case.
                         test_vector_in_chunk_axes = test_vector.dot(axes_matrix)
                         # Which chunk axis is this face on?
                         face_indices = np.nonzero(np.all(np.array([dist_from_center >= 0.5 - epsilon, dist_from_center <= 0.5 + epsilon]),axis=0))[0]
@@ -1459,12 +1497,14 @@ class Chunk_Network(MeshInstance):
                         raise Exception(
                             "Test point was on chunk corner. Did you use a block corner as a test point? Or did something else go wrong?")
 
-                print("Removing " + str(len(to_skip)) + " blocks out of " + str(len(self.all_blocks[t_i][0])))
+                #print("Removing " + str(len(to_skip)) + " blocks out of " + str(len(self.all_blocks[t_i][0])))
                 # We just shift it over to the "outside" list.
-                self.all_blocks[t_i] = ([self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
-                                         if block_i not in to_skip], np.concatenate([self.all_blocks[t_i][1],
-                      [self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
-                       if block_i in to_skip]]))
+                self.all_blocks[t_i] = ([np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])[block_i] for block_i in range(len(np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])))
+                                         if block_i not in to_skip], to_skip
+                                        #np.concatenate([self.all_blocks[t_i][1],
+                      #[self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
+                      # if block_i in to_skip]])
+                                        )
             #
             #
             #
