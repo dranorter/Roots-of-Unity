@@ -1822,6 +1822,8 @@ class Chunk_Network(MeshInstance):
         #	c.draw_mesh()
         print("Done calling draw. Time:")
         print(time.perf_counter() - starttime)
+        print("Chunk overlap measurement with new template alg:")
+        #self.measure_chunk_overlap()
 
     # if len(children) > 0:
     # 	st.generate_normals()
@@ -1848,16 +1850,31 @@ class Chunk_Network(MeshInstance):
         # we just have to measure how far they poke *out* instead of *in*. Result: 0.14199511391282327. OK, so we
         # should be able to test more vertices now; iterating through inside blocks saves time. (However, I'm pretty
         # confident in the result.)
+        # Seventh run, the definition of inside blocks has changed. Result still 0.14199511391282327.
+        # Eighth run, finally added more points. Value changed! 0.18587401723009223
+        # Ninth run, decided to add more points along edges, not just corners. 0 . 1 8 5 8 7 4 0 1 7 2 3 0 0 9 2 3 4
         highest = 0
         for template_i in range(len(self.all_blocks)):
             new_chunk = Chunk(self, template_i, [0, 0, 0, 0, 0, 0], 1)
             for block_j in range(len(self.all_blocks[template_i][0])):
                 center_3D = self.all_blocks[template_i][0][block_j].dot(self.normalworld.T)
                 # If the center is inside the chunk:
-                if new_chunk.rhomb_contains_point(center_3D) >= 0:  # 1e-15:
+                if True:#new_chunk.rhomb_contains_point(center_3D) >= 0:  # 1e-15:
                     origin_3D = np.floor(self.all_blocks[template_i][0][block_j]).dot(self.normalworld.T)
                     tip_3D = np.ceil(self.all_blocks[template_i][0][block_j]).dot(self.normalworld.T)
-                    for corner_3D in [origin_3D, tip_3D, np.concatenate([origin_3D[:3], tip_3D[3:]])]:
+                    for corner_3D in [origin_3D, tip_3D,
+                                      np.where([0,0,1], origin_3D, tip_3D),
+                                      np.where([0,1,0], origin_3D, tip_3D),
+                                      np.where([0,1,1], origin_3D, tip_3D),
+                                      np.where([1,0,0], origin_3D, tip_3D),
+                                      np.where([1,0,1], origin_3D, tip_3D),
+                                      np.where([1,1,0], origin_3D, tip_3D),
+                                      origin_3D/2 + np.where([1,0,1], origin_3D, tip_3D)/2,
+                                      tip_3D/3 + 2*np.where([1,0,1], origin_3D, tip_3D)/3,
+                                      np.array([(lambda x: origin_3D[0]*x + tip_3D[0]*(1-x))(r.random()),
+                                                (lambda x: origin_3D[1] * x + tip_3D[1] * (1 - x))(r.random()),
+                                                (lambda x: origin_3D[2] * x + tip_3D[2] * (1 - x))(r.random())
+                                                ])]:
                         distance_to_corner = new_chunk.rhomb_contains_point(corner_3D)
                         if distance_to_corner < 0:
                             print(-distance_to_corner)
@@ -2919,7 +2936,7 @@ class Chunk:
         # 0 . 3 3 9 5 0 5 4 4 1 8 3 1 1 7 3 3 7, 0 . 3 3 9 5 0 8 0 1 3 1 7 0 0 9 9 4, 0 . 3 3 9 6 9 5 7 2 0 9 1 1 6 9 6 8 6, 0 . 3 3 9 6 9 8 2 9 2 2 5 0 6 2 2 8 7, 0 . 3 3 9 7 0 0 8 6 3 5 8 9 5 4 8 9,
         # 0 . 3 3 9 9 7 7 1 6 9 6 5 3 0 1 1 8 3, 0 . 3 3 9 9 7 9 7 3 9 0 8 6 9 4 0 5 7, 0 . 3 4 0 0 3 1 7 7 0 1 2 3 9 9 9 6 5
         # Using a more cautious, less principled value for now.....
-        return self.rhomb_contains_point(point) > 0.15  # 0.271#0.19793839129906832
+        return self.rhomb_contains_point(point) > 0.1859  # 0.271#0.19793839129906832
 
     def might_contain_point(self, point, block_level=0):
         """
