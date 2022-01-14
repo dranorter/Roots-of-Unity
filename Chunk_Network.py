@@ -1007,10 +1007,9 @@ class Chunk_Network(MeshInstance):
                                axis=0)
                 if np.any(a_hit):
                     print("Some sort of neighbor block hit! ")
-                    # TODO Need to print a lot more test info here.
                     # Really, there can only be one hit here because we're looking at one template index i.
 
-                    test_vector = np.array([1,1,2])
+                    test_vector = np.array([1,2,3,0,0,0]).dot(self.worldplane.T)
                     epsilon = 2e-15
                     center = aligned_blocks[np.nonzero(a_hit)[0][0]]
                     level = 1
@@ -1049,7 +1048,7 @@ class Chunk_Network(MeshInstance):
 
         return hits
 
-    def generate_children(self, i, offset, level=2):
+    def generate_children(self, i, offset, level=2, os_children = False):
         """
         Takes a chunk, represented by a chunk template (as an index i suitable
         for self.all_blocks etc.) together with an offset for where that chunk
@@ -1078,8 +1077,9 @@ class Chunk_Network(MeshInstance):
         # TODO I'm making a major leap of faith here, that the "inside blocks"
         #  are genuinely all we need. It does look fine, though.
         # (In fact if anything, I still have overlap!)
-        chunks = np.array(
-            self.all_blocks[i][0])  # np.concatenate([np.array(self.all_blocks[i][0]), np.array(self.all_blocks[i][1])])
+        chunks = np.array(self.all_blocks[i][0])
+        if os_children:
+            chunks = np.concatenate([np.array(self.all_blocks[i][0]), np.array(self.all_blocks[i][1])])
         # print("Trying to find "+str(len(chunks))+" children")
         # Take the floor to get the correct origin point of the chunk for lookup.
         points = np.floor(chunks)
@@ -1259,10 +1259,14 @@ class Chunk_Network(MeshInstance):
         self.block_highlight.clear()
         # self.block_highlight.set_color(Color(.1,.1,.1))
         # Is the player contained in a fully generated chunk?
-        closest_chunks = self.chunk_at_location(self.player_pos)
+        closest_chunks = []
+        try:
+            closest_chunks = self.chunk_at_location(self.player_pos)
+        except:
+            print("Exception during non-generative search for player")
         if len(closest_chunks) != 1 or closest_chunks[0].level != 0:
             print(str(len(closest_chunks)) + " results from search for player. Level: " + str(
-                min([c.level for c in closest_chunks] + [0])))
+                min([c.level for c in closest_chunks] + [1000])))
         for closest_chunk in closest_chunks:
             self.player_guess = closest_chunk
             # closest_chunk.highlight_block()
@@ -1278,7 +1282,59 @@ class Chunk_Network(MeshInstance):
                     closest_chunk.all_children_generated))
                 # TODO It would be nice for testing to be able to discover whether anything new generates when generate=True.
                 # print("You need some ground to stand on! Trying to draw it in")
-                new_ground = closest_chunk.chunk_at_location(self.player_pos, target_level=0, generate=True)
+                new_ground = []
+                try:
+                    new_ground = closest_chunk.chunk_at_location(self.player_pos, target_level=0, generate=True)
+                except:
+                    print("I'm assuming the player is in a hole in the terrain.")
+                    print("Preparing debug info...")
+                    os_children_templates = self.generate_children(closest_chunk.template_index, closest_chunk.offset,
+                                                         closest_chunk.level,os_children = True)
+                    os_children_chunks = [Chunk(self, os_children_templates[i][0], os_children_templates[i][1], closest_chunk.level - 1)
+                                          for i in range(len(os_children_templates))]
+                    os_children_centers = (self.all_blocks[closest_chunk.template_index][0]
+                                           + self.all_blocks[closest_chunk.template_index][1])
+                    containing_children = []
+                    for i in range(len(os_children_templates)):
+                        child = os_children_chunks[i]
+                        if child.rhomb_contains_point(self.player_pos) >= 0:
+                            containing_children.append(i)
+                    print("Found "+str(len(containing_children))+" outsider children containing player.")
+                    for child_i in containing_children:
+                        print("Child at level "+str(os_children_chunks[child_i].level))
+                        if child_i < len(self.all_blocks[closest_chunk.template_index][0]):
+                            print("This one is inside the chunk; should've been found via generating children.")
+                        test_vector = np.array([1,2,3,0,0,0]).dot(self.worldplane.T)
+                        epsilon = 2e-15
+                        center = os_children_centers[child_i]
+                        level = 1
+                        axes_matrix = self.axes_matrix_lookup[self.all_chosen_centers[closest_chunk.template_index]][level]
+                        center_in_world = center.dot(self.worldplane.T)
+                        target_coords_in_chunk_axes = np.array(center_in_world).dot(axes_matrix) - 0.5
+                        dist_from_center = np.abs(target_coords_in_chunk_axes)
+                        test_vector_in_chunk_axes = test_vector.dot(axes_matrix)
+                        # Which chunk axis is this face on?
+                        face_indices = np.nonzero(
+                            np.all(np.array([dist_from_center >= 0.5 - epsilon, dist_from_center <= 0.5 + epsilon]),
+                                   axis=0))[0]
+                        face_tests = []
+                        for face_i in face_indices:
+                            # Which direction is the face?
+                            face_sign = np.sign(target_coords_in_chunk_axes[face_i])
+                            if test_vector_in_chunk_axes[face_i] * face_sign > 0:
+                                # Test vector points out of this face, so, out of chunk.
+                                face_tests.append(False)
+                            else:
+                                face_tests.append(True)
+                        print("Template: " + str(closest_chunk.template_index))
+                        print("Block center in chunk axes:")
+                        print(target_coords_in_chunk_axes)
+                        print("Test vector in chunk axes:")
+                        print(test_vector_in_chunk_axes)
+                        print(face_indices)
+                        print(face_tests)
+
+
                 if closest_chunk in new_ground:
                     print("Got same chunk back. Children generated? " + str(closest_chunk.all_children_generated))
                     print("Did the search go exactly the same way? " + str(new_ground == closest_chunks))
@@ -1330,6 +1386,7 @@ class Chunk_Network(MeshInstance):
         print(time.perf_counter() - starttime)
 
         # Lookup table for Chunk.rhomb_contains_point
+        # Uses possible_centers since there are as many of them as there are axis setups.
         # As the level goes up, these are merely rescaled.
         self.axes_matrix_lookup = {center: [np.linalg.inv(
             self.worldplane.T[np.nonzero(
@@ -1383,9 +1440,13 @@ class Chunk_Network(MeshInstance):
 
             # First idea: we want to point along the long axis of a prolate rhombohedron. Won't work: this is paralles
             #  to the face of (I believe) a prolate rhombohedron which shares 1 of the edge directions.
+            # OK: possible faces of blocks/chunks correspond to edges of an icosahedron (well, their cone thru
+            # the center). My first idea picked the center of an icosahedron face. But these edge lines need to be
+            # extended across the icosahedron faces, splitting each triangle in six. So: select the center of one
+            # of these 120 faces. We can get this with the previous face-center ([1,1,1,0,0,0]) plus an edge center
+            # ([0,1,1,0,0,0]) plus a corner ([0,0,1,0,0,0]).
 
-
-            test_vector = np.array([1,1,2])#np.array([1,1,1,0,0,0]).dot(self.worldplane.T)
+            test_vector = np.array([1,2,3,0,0,0]).dot(self.worldplane.T)
             print("Example axes matrix")
             print(self.axes_matrix_lookup[self.all_chosen_centers[2665]][1])
             print("Test vector in example chunk axes")
@@ -1500,7 +1561,8 @@ class Chunk_Network(MeshInstance):
                 #print("Removing " + str(len(to_skip)) + " blocks out of " + str(len(self.all_blocks[t_i][0])))
                 # We just shift it over to the "outside" list.
                 self.all_blocks[t_i] = ([np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])[block_i] for block_i in range(len(np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])))
-                                         if block_i not in to_skip], to_skip
+                                         if block_i not in to_skip], [np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])[block_i] for block_i in range(len(np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])))
+                                         if block_i in to_skip]
                                         #np.concatenate([self.all_blocks[t_i][1],
                       #[self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
                       # if block_i in to_skip]])
@@ -2492,7 +2554,7 @@ class Chunk:
                                             np.set_printoptions(precision=None)
 
                                             #test_vector = np.array([1, 1, 1, 0, 0, 0]).dot(self.network.worldplane.T)
-                                            test_vector = np.array([1,1,2])
+                                            test_vector = np.array([1,2,3,0,0,0]).dot(self.network.worldplane.T)
                                             epsilon = 2e-15
                                             child_center = self.network.all_blocks[self.template_index][0][child_i]
                                             neighbor_child_center = self.network.all_blocks[neighbor.template_index][0][neighbor_child_i]
@@ -2851,6 +2913,7 @@ class Chunk:
             axes = np.nonzero(ch_c - np.floor(ch_c) - 0.5)[0]
             # Convert point into the rhombohedron's basis for easy math
             # TODO Should use the golden field object to calculate these accurately; matrix inverse will introduce error.
+            # TODO Also there's an array self.network.axes_matrix_lookup which contains precomputed matrices.
             axes_matrix = np.linalg.inv(self.network.worldplane.T[axes] * self.network.phipow(3 * self.level))
         worldplane_chunk_origin = self.get_offset(0).dot(self.network.worldplane.T)
         target_coords_in_chunk_axes = (point - worldplane_chunk_origin).dot(axes_matrix) - 0.5
@@ -3132,6 +3195,8 @@ class Chunk:
                     print("How many are new? " + str(len(cousins)))
                     for c in closest_child_neighbors:
                         print("Containment: " + str(c.rhomb_contains_point(target)))
+                    # TODO Remove this exception, it's just for debugging
+                    raise Exception("Abandoning attempt before creeping search.")
                     # Try creeping search
                     print("Trying creeping search")
                     creeping_result = self._creeping_search(target, target_level, generate, verbose=True)
@@ -3206,6 +3271,8 @@ class Chunk:
                 #            .dot((self.children[child_i].get_offset(self.level-1) + (np.array(self.blocks[child_i])%1)))
                 #            .dot(self.network.worldplane.T)))
                 # Try creeping search
+                # TODO Remove this exception, it's just for debugging
+                raise Exception("Abandoning attempt before creeping search.")
                 print("Trying creeping search")
                 creeping_result = self._creeping_search(target, target_level, generate, verbose=True)
                 return [creeping_result]
