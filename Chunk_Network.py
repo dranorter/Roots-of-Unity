@@ -1254,16 +1254,82 @@ class Chunk_Network(MeshInstance):
         # what is and isn't loaded, and with fairly even coverage.
         if r.random() < 0.95:
             return
-        # For now, we use a loading radius, which cautiously expands.
+        # For now, we use a loading radius, which cautiously expands.#np.concatenate([self.all_blocks[t_i][1],
+        #                       #[self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
+        #                       # if block_i in to_skip]])
+        #                                         )
 
+        if self.player_guess is None:
+            self.player_guess = [self.highest_chunk]
+        random.shuffle(self.player_guess)
+        investigation = self.player_guess.pop().increment_search(self.player_pos)
+        for lead in investigation:
+            self.player_guess.append(lead)
+        print(self.player_guess)
+        if len(self.player_guess) == 0:
+            print("Huh, had to reset")
+            self.player_guess = [self.highest_chunk]
+        for guess in self.player_guess:
+            if guess.safely_contains_point(self.player_pos):
+                self.player_guess = [guess]
+        return
         self.block_highlight.clear()
         # self.block_highlight.set_color(Color(.1,.1,.1))
         # Is the player contained in a fully generated chunk?
         closest_chunks = []
         try:
             closest_chunks = self.chunk_at_location(self.player_pos)
-        except:
+        except Exception as e:
             print("Exception during non-generative search for player")
+            guess = e.args[1]
+            print("I'm assuming the player is in a hole in the terrain.")
+            print("Preparing debug info...")
+            os_children_templates = self.generate_children(guess.template_index, guess.offset,
+                                                           guess.level, os_children=True)
+            os_children_chunks = [
+                Chunk(self, os_children_templates[i][0], os_children_templates[i][1], guess.level - 1)
+                for i in range(len(os_children_templates))]
+            os_children_centers = (self.all_blocks[guess.template_index][0]
+                                   + self.all_blocks[guess.template_index][1])
+            containing_children = []
+            for i in range(len(os_children_templates)):
+                child = os_children_chunks[i]
+                if child.rhomb_contains_point(self.player_pos) >= 0:
+                    containing_children.append(i)
+            print("Found " + str(len(containing_children)) + " outsider children containing player.")
+            for child_i in containing_children:
+                print("Child at level " + str(os_children_chunks[child_i].level))
+                if child_i < len(self.all_blocks[guess.template_index][0]):
+                    print("This one is inside the chunk; should've been found via generating children.")
+                test_vector = np.array([1, 2, 3, 0, 0, 0]).dot(self.worldplane.T)
+                epsilon = 2e-15
+                center = os_children_centers[child_i]
+                level = 1
+                axes_matrix = self.axes_matrix_lookup[self.all_chosen_centers[guess.template_index]][level]
+                center_in_world = center.dot(self.worldplane.T)
+                target_coords_in_chunk_axes = np.array(center_in_world).dot(axes_matrix) - 0.5
+                dist_from_center = np.abs(target_coords_in_chunk_axes)
+                test_vector_in_chunk_axes = test_vector.dot(axes_matrix)
+                # Which chunk axis is this face on?
+                face_indices = np.nonzero(
+                    np.all(np.array([dist_from_center >= 0.5 - epsilon, dist_from_center <= 0.5 + epsilon]),
+                           axis=0))[0]
+                face_tests = []
+                for face_i in face_indices:
+                    # Which direction is the face?
+                    face_sign = np.sign(target_coords_in_chunk_axes[face_i])
+                    if test_vector_in_chunk_axes[face_i] * face_sign > 0:
+                        # Test vector points out of this face, so, out of chunk.
+                        face_tests.append(False)
+                    else:
+                        face_tests.append(True)
+                print("Template: " + str(guess.template_index))
+                print("Block center in chunk axes:")
+                print(target_coords_in_chunk_axes)
+                print("Test vector in chunk axes:")
+                print(test_vector_in_chunk_axes)
+                print(face_indices)
+                print(face_tests)
         if len(closest_chunks) != 1 or closest_chunks[0].level != 0:
             print(str(len(closest_chunks)) + " results from search for player. Level: " + str(
                 min([c.level for c in closest_chunks] + [1000])))
@@ -1341,7 +1407,59 @@ class Chunk_Network(MeshInstance):
                 return
         if len(closest_chunks) == 0:
             print("\n\tBroader chunk tree needed! Generating...\t")
-            closest_chunks = self.chunk_at_location(self.player_pos, target_level=0, generate=True, verbose=True)
+            try:
+                closest_chunks = self.chunk_at_location(self.player_pos, target_level=0, generate=True, verbose=True)
+            except Exception as e:
+                print("Exception during attempt to broaden.")
+                guess = e.args[1]
+                print("I'm assuming the player is in a hole in the terrain.")
+                print("Preparing debug info...")
+                os_children_templates = self.generate_children(guess.template_index, guess.offset,
+                                                               guess.level, os_children=True)
+                os_children_chunks = [
+                    Chunk(self, os_children_templates[i][0], os_children_templates[i][1], guess.level - 1)
+                    for i in range(len(os_children_templates))]
+                os_children_centers = (self.all_blocks[guess.template_index][0]
+                                       + self.all_blocks[guess.template_index][1])
+                containing_children = []
+                for i in range(len(os_children_templates)):
+                    child = os_children_chunks[i]
+                    if child.rhomb_contains_point(self.player_pos) >= 0:
+                        containing_children.append(i)
+                print("Found " + str(len(containing_children)) + " outsider children containing player.")
+                for child_i in containing_children:
+                    print("Child at level " + str(os_children_chunks[child_i].level))
+                    if child_i < len(self.all_blocks[guess.template_index][0]):
+                        print("This one is inside the chunk; should've been found via generating children.")
+                    test_vector = np.array([1, 2, 3, 0, 0, 0]).dot(self.worldplane.T)
+                    epsilon = 2e-15
+                    center = os_children_centers[child_i]
+                    level = 1
+                    axes_matrix = self.axes_matrix_lookup[self.all_chosen_centers[guess.template_index]][level]
+                    center_in_world = center.dot(self.worldplane.T)
+                    target_coords_in_chunk_axes = np.array(center_in_world).dot(axes_matrix) - 0.5
+                    dist_from_center = np.abs(target_coords_in_chunk_axes)
+                    test_vector_in_chunk_axes = test_vector.dot(axes_matrix)
+                    # Which chunk axis is this face on?
+                    face_indices = np.nonzero(
+                        np.all(np.array([dist_from_center >= 0.5 - epsilon, dist_from_center <= 0.5 + epsilon]),
+                               axis=0))[0]
+                    face_tests = []
+                    for face_i in face_indices:
+                        # Which direction is the face?
+                        face_sign = np.sign(target_coords_in_chunk_axes[face_i])
+                        if test_vector_in_chunk_axes[face_i] * face_sign > 0:
+                            # Test vector points out of this face, so, out of chunk.
+                            face_tests.append(False)
+                        else:
+                            face_tests.append(True)
+                    print("Template: " + str(guess.template_index))
+                    print("Block center in chunk axes:")
+                    print(target_coords_in_chunk_axes)
+                    print("Test vector in chunk axes:")
+                    print(test_vector_in_chunk_axes)
+                    print(face_indices)
+                    print(face_tests)
             print("\n\tBroadening resulted in " + str(len(closest_chunks)) + " search results.\n")
             return
 
@@ -1381,7 +1499,7 @@ class Chunk_Network(MeshInstance):
         print(time.perf_counter() - starttime)
         print("Loading...")
 
-        self.load_templates_npy("simplified_constraints")
+        self.load_templates_npy("templates_test_vector_123")
         print("Done loading " + str(len(self.all_constraints)) + " templates")
         print(time.perf_counter() - starttime)
 
@@ -1412,7 +1530,7 @@ class Chunk_Network(MeshInstance):
         # After 20 calls of self.simplify_constraints():
         # 359, 315, 514, 336, 343, 325, 440, 509, 339, 338, 411, 500, 377, 328, 324
 
-        do_check_overlap = True
+        do_check_overlap = False
         if do_check_overlap:
             print("Removing duplicate blocks...")
 
@@ -1447,10 +1565,6 @@ class Chunk_Network(MeshInstance):
             # ([0,1,1,0,0,0]) plus a corner ([0,0,1,0,0,0]).
 
             test_vector = np.array([1,2,3,0,0,0]).dot(self.worldplane.T)
-            print("Example axes matrix")
-            print(self.axes_matrix_lookup[self.all_chosen_centers[2665]][1])
-            print("Test vector in example chunk axes")
-            print(test_vector.dot(self.axes_matrix_lookup[self.all_chosen_centers[2665]][1]))
 
             # It seems (tho, after very few tests) that an epsilon value of 2e-15 is too high, and still produces
             # overlap bettween chunks. An epsilon value of 1e-15 is too low, and still produces holes.
@@ -1499,6 +1613,7 @@ class Chunk_Network(MeshInstance):
             for t_i in range(len(self.all_blocks)):
                 to_skip = []
                 blocks = np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])
+                # TODO Should be more certain of no duplicates in "blocks".
                 for block_i in range(len(blocks)):
                     center = blocks[block_i]
                     level = 1
@@ -1558,101 +1673,31 @@ class Chunk_Network(MeshInstance):
                         raise Exception(
                             "Test point was on chunk corner. Did you use a block corner as a test point? Or did something else go wrong?")
 
-                #print("Removing " + str(len(to_skip)) + " blocks out of " + str(len(self.all_blocks[t_i][0])))
+                print("Removing " + str(len(to_skip)) + " blocks out of " + str(len(self.all_blocks[t_i][0])))
                 # We just shift it over to the "outside" list.
                 self.all_blocks[t_i] = ([np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])[block_i] for block_i in range(len(np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])))
                                          if block_i not in to_skip], [np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])[block_i] for block_i in range(len(np.concatenate([self.all_blocks[t_i][0], self.all_blocks[t_i][1]])))
                                          if block_i in to_skip]
-                                        #np.concatenate([self.all_blocks[t_i][1],
-                      #[self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
-                      # if block_i in to_skip]])
+                                        # np.concatenate([self.all_blocks[t_i][1],
+                                        # [self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
+                                        # if block_i in to_skip]])
                                         )
-            #
-            #
-            #
-            # for t_i in range(len(self.all_blocks)):
-            #     to_skip = []
-            #     blocks = self.all_blocks[t_i][0]
-            #     for block_i in range(len(self.all_blocks[t_i][0])):
-            #         center = blocks[block_i]
-            #         origin = np.floor(blocks[block_i])
-            #         axes = np.nonzero(blocks[block_i] - np.floor(blocks[block_i]))[0]
-            #         testpoint = (np.floor(blocks[block_i])
-            #                      + 0.8 * np.eye(6)[axes[0]]
-            #                      + 0.1 * np.eye(6)[axes[1]]
-            #                      + 0.1 * np.eye(6)[axes[2]])
-            #         testpoint2 = (
-            #                 np.floor(blocks[block_i])
-            #                 + 0.1 * np.eye(6)[axes[0]]
-            #                 + 0.8 * np.eye(6)[axes[1]]
-            #                 + 0.1 * np.eye(6)[axes[2]])
-            #         testpoint3 = (
-            #                 np.floor(blocks[block_i])
-            #                 + 0.1 * np.eye(6)[axes[0]]
-            #                 + 0.1 * np.eye(6)[axes[1]]
-            #                 + 0.8 * np.eye(6)[axes[2]])
-            #         testpoint4 = (
-            #                 np.floor(blocks[block_i])
-            #                 + 0.8 * np.eye(6)[axes[0]]
-            #                 + 0.8 * np.eye(6)[axes[1]]
-            #                 + 0.1 * np.eye(6)[axes[2]])
-            #         dist_center = rhomb_contains_point(center.dot(self.worldplane.T), t_i)
-            #         dist_origin = rhomb_contains_point(origin.dot(self.worldplane.T), t_i)
-            #         dist_testpoint = rhomb_contains_point(testpoint.dot(self.worldplane.T), t_i)
-            #         dist_testpoint2 = rhomb_contains_point(testpoint2.dot(self.worldplane.T), t_i)
-            #         dist_testpoint3 = rhomb_contains_point(testpoint3.dot(self.worldplane.T), t_i)
-            #         dist_testpoint4 = rhomb_contains_point(testpoint4.dot(self.worldplane.T), t_i)
-            #         # print(dist_center)
-            #         if abs(dist_center) < 1e-15:
-            #             test_value = [0]
-            #             # Block most likely picked up by a neighboring chunk in its template. Decide who the block belongs to.
-            #             # The idea is, the block's origin is canonical (ie, the different templates will agree on it). Whichever
-            #             # chunk contains the origin can take ownership of the point.
-            #             # print("Got to 1st test")
-            #             if abs(dist_origin) < 1e-15:
-            #                 # print("Got to 1st test")
-            #                 # Origin doesn't work as tiebreak, go to first test point.
-            #                 if abs(dist_testpoint) < 1e-15:
-            #                     # First testpoint doesn't work as tiebreak; go to second testpoint.
-            #                     # print("Got to 2nd test")
-            #                     if abs(dist_testpoint2) < 1e-15:
-            #                         # Second testpoint doesn't work either!!
-            #                         # print("Got to 3rd test")
-            #                         if abs(dist_testpoint3) < 1e-15:
-            #                             # print("Got to 4th test")
-            #                             if abs(dist_testpoint4) < 1e-15:
-            #                                 raise Exception(
-            #                                     "Unable to assign block to a specific chunk. Please add 5th test point.")
-            #                             else:
-            #                                 test_value[0] = dist_testpoint4
-            #                         else:
-            #                             test_value[0] = dist_testpoint3
-            #                     else:
-            #                         test_value[0] = dist_testpoint2
-            #                 else:
-            #                     test_value[0] = dist_testpoint
-            #             else:
-            #                 test_value[0] = dist_origin
-            #             # If test_value > 0, the block stays.
-            #             if test_value[0] < 0:
-            #                 print(test_value[0])
-            #                 to_skip.append(block_i)
-            #     print("Removing " + str(len(to_skip)) + " blocks out of " + str(len(self.all_blocks[t_i][0])))
-            #     # We just shift it over to the "outside" list.
-            #     self.all_blocks[t_i] = ([self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
-            #                              if block_i not in to_skip], np.concatenate(
-            #         [self.all_blocks[t_i][1],
-            #          [self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
-            #           if block_i in to_skip]]))
-
             print("Removed dupes in templates.")
             print(time.perf_counter() - starttime)
         # Now that constraints have considerably less points, we probably need considerably less of them.
-        # self.test_templates(True)
-        # self.simplify_constraints()
-        # self.simplify_constraints()
-        # self.simplify_constraints()
-        # self.save_templates_npy("templates_test_point")
+        # TODO Make re-simplifying and redoing the constraint tree easier.
+        #self.test_templates()#(True)
+        #print("Going to simplify")
+        #self.simplify_constraints()
+        #print("Simplified once")
+        #self.simplify_constraints()
+        #self.simplify_constraints()
+        #print("Simplified thrice")
+        #self.simplify_constraints()
+        #self.simplify_constraints()
+        #self.simplify_constraints()
+        #print("Going to save")
+        #self.save_templates_npy("templates_test_vector_123")
 
         # TODO Could still try optimizing generation by pre-generating higher-level chunks --
         #  e.g. making templates for supersuperchunks. But at this point it feels like that
@@ -1661,16 +1706,17 @@ class Chunk_Network(MeshInstance):
         # Now with somewhat more compact constraints, we can create a decent-speed
         # lookup tree.
 
-        # self.constraint_tree = ConstraintTree.sort(self.all_constraints, list(range(len(self.all_constraints))), self.constraint_nums)
-        # self.constraint_tree.save()
-        # print("Tree has been saved!")
-        # print("Done constructing constraint tree")
-        self.constraint_tree = ConstraintTree.load()
+        #self.constraint_tree = ConstraintTree.sort(self.all_constraints, list(range(len(self.all_constraints))), self.constraint_nums)
+        #self.constraint_tree.save("templates_test_vector_123.tree")
+        #print("Tree has been saved!")
+        #print("Done constructing constraint tree")
+        self.constraint_tree = ConstraintTree.load("templates_test_vector_123.tree")
         print("Done loading constraint search tree.")
         print(time.perf_counter() - starttime)
 
         # Choose one chunk to display
         chunk_num = r.choice(range(len(self.all_blocks)))
+        print("Chosen chunk:"+str(chunk_num))
         chosen_center = self.chunk_center_lookup(chunk_num)
         inside_blocks = self.all_blocks[chunk_num][0]
         outside_blocks = self.all_blocks[chunk_num][1]
@@ -1767,9 +1813,10 @@ class Chunk_Network(MeshInstance):
         # superhits = self.generate_parents(hits[0][0], hits[0][1], level=2)
         # print("Got " + str(len(superhits)) + " supersuperchunks")
         # print(time.perf_counter() - starttime)
-        print("getting super-super-chunk")
-        self.highest_chunk.get_parent()
-        print(time.perf_counter() - starttime)
+
+        #print("getting super-super-chunk")
+        #self.highest_chunk.get_parent()
+        #print(time.perf_counter() - starttime)
 
         # supersuperhits = self.generate_parents(superhits[0][0],superhits[0][1],level=3)
         # print("Got "+str(len(supersuperhits))+" supersupersuperchunks")
@@ -1786,7 +1833,7 @@ class Chunk_Network(MeshInstance):
         # 	all_superchunks += self.generate_children(i, offset,
         # 											  level=3)  # [(int(l[0]),l[1:]) for l in self.generate_children(i,offset,level=3)]
         # print("Superchunks total: " + str(len(all_superchunks)))
-        all_superchunks = self.highest_chunk.get_children()
+        all_superchunks = [self.highest_chunk]#self.highest_chunk.get_children()
 
         # Draw the valid chunk(s)
         # for superchunk in hits:
@@ -1884,7 +1931,7 @@ class Chunk_Network(MeshInstance):
         #	c.draw_mesh()
         print("Done calling draw. Time:")
         print(time.perf_counter() - starttime)
-        print("Chunk overlap measurement with new template alg:")
+        #print("Chunk overlap measurement with new template alg:")
         #self.measure_chunk_overlap()
 
     # if len(children) > 0:
@@ -2428,6 +2475,7 @@ class Chunk:
         :return: A list of all children as chunks, in the same order as in the chunk template.
         """
         # TODO Still struggling with neighbor relationships. Carefully double check here that all neighbors get connected.
+        # TODO Occasionally, some children are None even after a get_children call.
         if not self.all_children_generated:
             children = self.network.generate_children(self.template_index, self.offset, self.level)
             if len(children) != len(self.blocks):
@@ -3088,9 +3136,8 @@ class Chunk:
                         return []
 
     def _creeping_search(self, target, target_level, generate, verbose=False):
-        # TODO This *seems* like it should be a decent search strategy, but at the moment it's encountering various
-        #  crashes, such as needing a really large chunk hierarchy. Not sure if the problem is here, inside get_neighbors(),
-        #  or just generally to do with the bugginess of the chunk generation right now.
+        #TODO This *seems* like it should be a decent search strategy, but was only really tested when the
+        # chunk network was a bit broken.
         creeper = self
         generate = True
         while creeper.level > target_level or creeper.rhomb_contains_point(target) < -1e-15:
@@ -3196,7 +3243,7 @@ class Chunk:
                     for c in closest_child_neighbors:
                         print("Containment: " + str(c.rhomb_contains_point(target)))
                     # TODO Remove this exception, it's just for debugging
-                    raise Exception("Abandoning attempt before creeping search.")
+                    raise Exception("Abandoning attempt before creeping search.", self)
                     # Try creeping search
                     print("Trying creeping search")
                     creeping_result = self._creeping_search(target, target_level, generate, verbose=True)
@@ -3272,7 +3319,7 @@ class Chunk:
                 #            .dot(self.network.worldplane.T)))
                 # Try creeping search
                 # TODO Remove this exception, it's just for debugging
-                raise Exception("Abandoning attempt before creeping search.")
+                raise Exception("Abandoning attempt before creeping search.", self)
                 print("Trying creeping search")
                 creeping_result = self._creeping_search(target, target_level, generate, verbose=True)
                 return [creeping_result]
@@ -3307,6 +3354,92 @@ class Chunk:
             # be incomplete. We shouldn't return an empty list, because the search process reached this far so
             # the present chunk is a possible location of target (it might even be a sure location).
             return [self]
+
+    def increment_search(self, target):
+        """A debugging-oriented search/generation algorithm, for when the chunk network is broken."""
+        #TODO All these hypothetical blocks are getting drawn and assigned hitboxes, which makes it hard to tell what's
+        # really happening. Properly delete them.
+        if self.rhomb_contains_point(target) >= 0:
+            if self.level <= 1:
+                print(str(self)+ " is sufficient.")
+                self.get_children()
+                return [self]
+        print(str(self)+ " is not sufficient.")
+        all_possible_children = self.network.generate_children(self.template_index, self.offset, self.level, True)
+        possible_child_chunks = [Chunk(self.network, child[0], child[1], self.level - 1) for child in all_possible_children]
+        safely_contains_check = [c.safely_contains_point(target) for c in possible_child_chunks]
+        might_contain_check = [c.might_contain_point(target) for c in possible_child_chunks]
+        if np.any(safely_contains_check):
+            # We have the safely_contains guarantee, and need no upwards search.
+            actual_children = [chunk for chunk in self.get_children() if chunk is not None]
+            for a_child in actual_children:
+                if a_child.safely_contains_point(target):
+                    return [a_child]
+            # Hmm ok, it was an outside hit. May need upwards search; deal with this after.
+        parent_stack = [self]
+        while parent_stack[-1].parent is not None:
+            parent_stack.append(parent_stack[-1].parent)
+        parent_safely_contains_check = [c.safely_contains_point(target) for c in parent_stack]
+        if not np.any(parent_safely_contains_check):
+            parent_stack.append(parent_stack[-1].get_parent())
+            # We added a new chunk, so that counts as an increment.
+            print("Added new parent.")
+            return [parent_stack[-1]]
+        if np.any(safely_contains_check):
+            print("Outside hit; attempting to join main tree.")
+            # Due to the earlier check, we can assume the hit is not properly our own child.
+            # This time we know there's some shared ancestor between self and the child's proper parent.
+            hits = np.nonzero(safely_contains_check)[0]
+            if len(hits) > 1:
+                print("Somehow got "+str(len(hits))+" children which safely contain target.")
+            possible_child = possible_child_chunks[hits[0]]
+            child_parent_stack = [possible_child]
+            united = False
+            # Because we're doing this with a merely possible child, we have to do it all in one go, not incrementally.
+            # This is unfortunate, since there will be a lot of hits like this.
+            parent_stack_templates = [p.template_index for p in parent_stack]
+            # TODO Maybe totally skip this if the current chunk doesn't even possibly contain the target.
+            while len(child_parent_stack) <= len(parent_stack) and not united:
+                child_parent_stack.append(child_parent_stack[-1].get_parent())
+                new_parent = child_parent_stack[-1]
+                if new_parent.template_index in parent_stack_templates:
+                    #TODO This will break if a parent stack has multiple chunks with the same template.
+                    possible_match = parent_stack[parent_stack_templates.index(new_parent.template_index)]
+                    if np.all(possible_match.offset == new_parent.offset):
+                        # We've got a match.
+                        united = True
+            if not united:
+                print("Found a chunk at level "+str(self.level - 1)+" which safely contained target.\n"
+                      + "However, failed to find a shared parent with existing hierarchy.")
+                return []
+            # We just need to locate the match in the existing hierarchy.
+            child_parent_stack = child_parent_stack[:-1]
+            child_parent_stack.reverse()
+            print("Found a solid hit; evaluating a parent stack:")
+            print(child_parent_stack)
+            lowest_match = possible_child
+            for possible_chunk in child_parent_stack:
+                sift_amongst = [chunk for chunk in lowest_match.get_children() if chunk is not None]
+                sifted_template = [c.template_index == possible_chunk.template_index for c in sift_amongst]
+                sifted_offset = [np.all(c.offset == possible_chunk.offset) for c in sift_amongst]
+                if not np.any(sifted_template) or not np.any(sifted_offset):
+                    print("Found a chunk at level "+str(self.level - 1)+" which safely contained target.\n"
+                          + "However, its proper parent at level "+str(possible_chunk.level)+" will not claim it.")
+                    #TODO This is occurring. Print helpful data here.
+                    return []
+                lowest_match = sift_amongst[list(set(sifted_template).intersection(set(sifted_offset)))[0]]
+            print("Main tree joined.")
+            return [lowest_match]
+        # The best we can do is return all children which might contain the target.
+        if not np.any(might_contain_check):
+            print("This chunk is far from the target, abandoning.")
+            return []
+        # It's ok to ignore outside hits now, since there's a safely containing parent. There might still be oddities,
+        # but we don't have a safely_contains hit to use to dig into details.
+        might_contains = [c for c in self.get_children() if c is not None and c.might_contain_point(target)]
+        print("Returning "+str(len(might_contains))+" might-contains.")
+        return might_contains
+
 
     def highlight_block(self):
         """
