@@ -13,7 +13,7 @@ import sys
 
 import numpy as np
 from numpy.testing import (
-    assert_raises, assert_warns, assert_, assert_array_equal
+    assert_raises, assert_warns, assert_, assert_array_equal, SkipTest, KnownFailureException
     )
 
 from numpy.core._multiarray_tests import fromstring_null_term_c_api
@@ -314,19 +314,21 @@ class TestBinaryReprInsufficientWidthParameterForRepresentation(_DeprecationTest
         self.assert_deprecated(np.binary_repr, args=args, kwargs=kwargs)
 
 
-class TestNumericStyleTypecodes(_DeprecationTestCase):
-    """
-    Most numeric style typecodes were previously deprecated (and removed)
-    in 1.20. This also deprecates the remaining ones.
-    """
-    # 2020-06-09, NumPy 1.20
-    def test_all_dtypes(self):
-        deprecated_types = ['Bytes0', 'Datetime64', 'Str0']
-        # Depending on intp size, either Uint32 or Uint64 is defined:
-        deprecated_types.append(f"U{np.dtype(np.intp).name}")
-        for dt in deprecated_types:
-            self.assert_deprecated(np.dtype, exceptions=(TypeError,),
-                                   args=(dt,))
+class TestDTypeAttributeIsDTypeDeprecation(_DeprecationTestCase):
+    # Deprecated 2021-01-05, NumPy 1.21
+    message = r".*`.dtype` attribute"
+
+    def test_deprecation_dtype_attribute_is_dtype(self):
+        class dt:
+            dtype = "f8"
+
+        class vdt(np.void):
+            dtype = "f,f"
+
+        self.assert_deprecated(lambda: np.dtype(dt))
+        self.assert_deprecated(lambda: np.dtype(dt()))
+        self.assert_deprecated(lambda: np.dtype(vdt))
+        self.assert_deprecated(lambda: np.dtype(vdt(1)))
 
 
 class TestTestDeprecated:
@@ -681,6 +683,9 @@ class TestDeprecatedGlobals(_DeprecationTestCase):
         self.assert_deprecated(lambda: np.long(1))
         self.assert_deprecated(lambda: np.unicode('abc'))
 
+        # from np.core.numerictypes
+        self.assert_deprecated(lambda: np.typeDict)
+
 
 class TestMatrixInOuter(_DeprecationTestCase):
     # 2020-05-13 NumPy 1.20.0
@@ -786,7 +791,7 @@ class TestFutureWarningArrayLikeNotIterable(_DeprecationTestCase):
         *not* define the sequence protocol.
 
         NOTE: Tests for the versions including __len__ and __getitem__ exist
-              in `test_array_coercion.py` and they can be modified or ammended
+              in `test_array_coercion.py` and they can be modified or amended
               when this deprecation expired.
         """
         blueprint = np.arange(10)
@@ -871,3 +876,377 @@ class TestDeprecatedUnpickleObjectScalar(_DeprecationTestCase):
     def test_deprecated(self):
         ctor = np.core.multiarray.scalar
         self.assert_deprecated(lambda: ctor(np.dtype("O"), 1))
+
+try:
+    with warnings.catch_warnings():
+        warnings.simplefilter("always")
+        import nose  # noqa: F401
+except ImportError:
+    HAVE_NOSE = False
+else:
+    HAVE_NOSE = True
+
+
+@pytest.mark.skipif(not HAVE_NOSE, reason="Needs nose")
+class TestNoseDecoratorsDeprecated(_DeprecationTestCase):
+    class DidntSkipException(Exception):
+        pass
+
+    def test_slow(self):
+        def _test_slow():
+            @np.testing.dec.slow
+            def slow_func(x, y, z):
+                pass
+
+            assert_(slow_func.slow)
+        self.assert_deprecated(_test_slow)
+
+    def test_setastest(self):
+        def _test_setastest():
+            @np.testing.dec.setastest()
+            def f_default(a):
+                pass
+
+            @np.testing.dec.setastest(True)
+            def f_istest(a):
+                pass
+
+            @np.testing.dec.setastest(False)
+            def f_isnottest(a):
+                pass
+
+            assert_(f_default.__test__)
+            assert_(f_istest.__test__)
+            assert_(not f_isnottest.__test__)
+        self.assert_deprecated(_test_setastest, num=3)
+
+    def test_skip_functions_hardcoded(self):
+        def _test_skip_functions_hardcoded():
+            @np.testing.dec.skipif(True)
+            def f1(x):
+                raise self.DidntSkipException
+
+            try:
+                f1('a')
+            except self.DidntSkipException:
+                raise Exception('Failed to skip')
+            except SkipTest().__class__:
+                pass
+
+            @np.testing.dec.skipif(False)
+            def f2(x):
+                raise self.DidntSkipException
+
+            try:
+                f2('a')
+            except self.DidntSkipException:
+                pass
+            except SkipTest().__class__:
+                raise Exception('Skipped when not expected to')
+        self.assert_deprecated(_test_skip_functions_hardcoded, num=2)
+
+    def test_skip_functions_callable(self):
+        def _test_skip_functions_callable():
+            def skip_tester():
+                return skip_flag == 'skip me!'
+
+            @np.testing.dec.skipif(skip_tester)
+            def f1(x):
+                raise self.DidntSkipException
+
+            try:
+                skip_flag = 'skip me!'
+                f1('a')
+            except self.DidntSkipException:
+                raise Exception('Failed to skip')
+            except SkipTest().__class__:
+                pass
+
+            @np.testing.dec.skipif(skip_tester)
+            def f2(x):
+                raise self.DidntSkipException
+
+            try:
+                skip_flag = 'five is right out!'
+                f2('a')
+            except self.DidntSkipException:
+                pass
+            except SkipTest().__class__:
+                raise Exception('Skipped when not expected to')
+        self.assert_deprecated(_test_skip_functions_callable, num=2)
+
+    def test_skip_generators_hardcoded(self):
+        def _test_skip_generators_hardcoded():
+            @np.testing.dec.knownfailureif(True, "This test is known to fail")
+            def g1(x):
+                yield from range(x)
+
+            try:
+                for j in g1(10):
+                    pass
+            except KnownFailureException().__class__:
+                pass
+            else:
+                raise Exception('Failed to mark as known failure')
+
+            @np.testing.dec.knownfailureif(False, "This test is NOT known to fail")
+            def g2(x):
+                yield from range(x)
+                raise self.DidntSkipException('FAIL')
+
+            try:
+                for j in g2(10):
+                    pass
+            except KnownFailureException().__class__:
+                raise Exception('Marked incorrectly as known failure')
+            except self.DidntSkipException:
+                pass
+        self.assert_deprecated(_test_skip_generators_hardcoded, num=2)
+
+    def test_skip_generators_callable(self):
+        def _test_skip_generators_callable():
+            def skip_tester():
+                return skip_flag == 'skip me!'
+
+            @np.testing.dec.knownfailureif(skip_tester, "This test is known to fail")
+            def g1(x):
+                yield from range(x)
+
+            try:
+                skip_flag = 'skip me!'
+                for j in g1(10):
+                    pass
+            except KnownFailureException().__class__:
+                pass
+            else:
+                raise Exception('Failed to mark as known failure')
+
+            @np.testing.dec.knownfailureif(skip_tester, "This test is NOT known to fail")
+            def g2(x):
+                yield from range(x)
+                raise self.DidntSkipException('FAIL')
+
+            try:
+                skip_flag = 'do not skip'
+                for j in g2(10):
+                    pass
+            except KnownFailureException().__class__:
+                raise Exception('Marked incorrectly as known failure')
+            except self.DidntSkipException:
+                pass
+        self.assert_deprecated(_test_skip_generators_callable, num=2)
+
+    def test_deprecated(self):
+        def _test_deprecated():
+            @np.testing.dec.deprecated(True)
+            def non_deprecated_func():
+                pass
+
+            @np.testing.dec.deprecated()
+            def deprecated_func():
+                import warnings
+                warnings.warn("TEST: deprecated func", DeprecationWarning, stacklevel=1)
+
+            @np.testing.dec.deprecated()
+            def deprecated_func2():
+                import warnings
+                warnings.warn("AHHHH", stacklevel=1)
+                raise ValueError
+
+            @np.testing.dec.deprecated()
+            def deprecated_func3():
+                import warnings
+                warnings.warn("AHHHH", stacklevel=1)
+
+            # marked as deprecated, but does not raise DeprecationWarning
+            assert_raises(AssertionError, non_deprecated_func)
+            # should be silent
+            deprecated_func()
+            with warnings.catch_warnings(record=True):
+                warnings.simplefilter("always")  # do not propagate unrelated warnings
+                # fails if deprecated decorator just disables test. See #1453.
+                assert_raises(ValueError, deprecated_func2)
+                # warning is not a DeprecationWarning
+                assert_raises(AssertionError, deprecated_func3)
+        self.assert_deprecated(_test_deprecated, num=4)
+
+    def test_parametrize(self):
+        def _test_parametrize():
+            # dec.parametrize assumes that it is being run by nose. Because
+            # we are running under pytest, we need to explicitly check the
+            # results.
+            @np.testing.dec.parametrize('base, power, expected',
+                    [(1, 1, 1),
+                    (2, 1, 2),
+                    (2, 2, 4)])
+            def check_parametrize(base, power, expected):
+                assert_(base**power == expected)
+
+            count = 0
+            for test in check_parametrize():
+                test[0](*test[1:])
+                count += 1
+            assert_(count == 3)
+        self.assert_deprecated(_test_parametrize)
+
+
+class TestSingleElementSignature(_DeprecationTestCase):
+    # Deprecated 2021-04-01, NumPy 1.21
+    message = r"The use of a length 1"
+
+    def test_deprecated(self):
+        self.assert_deprecated(lambda: np.add(1, 2, signature="d"))
+        self.assert_deprecated(lambda: np.add(1, 2, sig=(np.dtype("l"),)))
+
+
+class TestComparisonBadDType(_DeprecationTestCase):
+    # Deprecated 2021-04-01, NumPy 1.21
+    message = r"using `dtype=` in comparisons is only useful for"
+
+    def test_deprecated(self):
+        self.assert_deprecated(lambda: np.equal(1, 1, dtype=np.int64))
+        # Not an error only for the transition
+        self.assert_deprecated(lambda: np.equal(1, 1, sig=(None, None, "l")))
+
+    def test_not_deprecated(self):
+        np.equal(True, False, dtype=bool)
+        np.equal(3, 5, dtype=bool, casting="unsafe")
+        np.equal([None], [4], dtype=object)
+
+class TestComparisonBadObjectDType(_DeprecationTestCase):
+    # Deprecated 2021-04-01, NumPy 1.21  (different branch of the above one)
+    message = r"using `dtype=object` \(or equivalent signature\) will"
+    warning_cls = FutureWarning
+
+    def test_deprecated(self):
+        self.assert_deprecated(lambda: np.equal(1, 1, dtype=object))
+        self.assert_deprecated(
+                lambda: np.equal(1, 1, sig=(None, None, object)))
+
+
+class TestSpecialAttributeLookupFailure(_DeprecationTestCase):
+    message = r"An exception was ignored while fetching the attribute"
+
+    class WeirdArrayLike:
+        @property
+        def __array__(self):
+            raise RuntimeError("oops!")
+
+    class WeirdArrayInterface:
+        @property
+        def __array_interface__(self):
+            raise RuntimeError("oops!")
+
+    def test_deprecated(self):
+        self.assert_deprecated(lambda: np.array(self.WeirdArrayLike()))
+        self.assert_deprecated(lambda: np.array(self.WeirdArrayInterface()))
+
+
+class TestCtypesGetter(_DeprecationTestCase):
+    # Deprecated 2021-05-18, Numpy 1.21.0
+    warning_cls = DeprecationWarning
+    ctypes = np.array([1]).ctypes
+
+    @pytest.mark.parametrize(
+        "name", ["get_data", "get_shape", "get_strides", "get_as_parameter"]
+    )
+    def test_deprecated(self, name: str) -> None:
+        func = getattr(self.ctypes, name)
+        self.assert_deprecated(lambda: func())
+
+    @pytest.mark.parametrize(
+        "name", ["data", "shape", "strides", "_as_parameter_"]
+    )
+    def test_not_deprecated(self, name: str) -> None:
+        self.assert_not_deprecated(lambda: getattr(self.ctypes, name))
+
+
+class TestUFuncForcedDTypeWarning(_DeprecationTestCase):
+    message = "The `dtype` and `signature` arguments to ufuncs only select the"
+
+    def test_not_deprecated(self):
+        import pickle
+        # does not warn (test relies on bad pickling behaviour, simply remove
+        # it if the `assert int64 is not int64_2` should start failing.
+        int64 = np.dtype("int64")
+        int64_2 = pickle.loads(pickle.dumps(int64))
+        assert int64 is not int64_2
+        self.assert_not_deprecated(lambda: np.add(3, 4, dtype=int64_2))
+
+    def test_deprecation(self):
+        int64 = np.dtype("int64")
+        self.assert_deprecated(lambda: np.add(3, 5, dtype=int64.newbyteorder()))
+        self.assert_deprecated(lambda: np.add(3, 5, dtype="m8[ns]"))
+
+    def test_behaviour(self):
+        int64 = np.dtype("int64")
+        arr = np.arange(10, dtype="m8[s]")
+
+        with pytest.warns(DeprecationWarning, match=self.message):
+            np.add(3, 5, dtype=int64.newbyteorder())
+        with pytest.warns(DeprecationWarning, match=self.message):
+            np.add(3, 5, dtype="m8[ns]")  # previously used the "ns"
+        with pytest.warns(DeprecationWarning, match=self.message):
+            np.add(arr, arr, dtype="m8[ns]")  # never preserved the "ns"
+        with pytest.warns(DeprecationWarning, match=self.message):
+            np.maximum(arr, arr, dtype="m8[ns]")  # previously used the "ns"
+        with pytest.warns(DeprecationWarning, match=self.message):
+            np.maximum.reduce(arr, dtype="m8[ns]")  # never preserved the "ns"
+
+
+PARTITION_DICT = {
+    "partition method": np.arange(10).partition,
+    "argpartition method": np.arange(10).argpartition,
+    "partition function": lambda kth: np.partition(np.arange(10), kth),
+    "argpartition function": lambda kth: np.argpartition(np.arange(10), kth),
+}
+
+
+@pytest.mark.parametrize("func", PARTITION_DICT.values(), ids=PARTITION_DICT)
+class TestPartitionBoolIndex(_DeprecationTestCase):
+    # Deprecated 2021-09-29, NumPy 1.22
+    warning_cls = DeprecationWarning
+    message = "Passing booleans as partition index is deprecated"
+
+    def test_deprecated(self, func):
+        self.assert_deprecated(lambda: func(True))
+        self.assert_deprecated(lambda: func([False, True]))
+
+    def test_not_deprecated(self, func):
+        self.assert_not_deprecated(lambda: func(1))
+        self.assert_not_deprecated(lambda: func([0, 1]))
+
+
+class TestMachAr(_DeprecationTestCase):
+    # Deprecated 2021-10-19, NumPy 1.22
+    warning_cls = DeprecationWarning
+
+    def test_deprecated(self):
+        self.assert_deprecated(lambda: np.MachAr)
+
+    def test_deprecated_module(self):
+        self.assert_deprecated(lambda: getattr(np.core, "machar"))
+
+    def test_deprecated_attr(self):
+        finfo = np.finfo(float)
+        self.assert_deprecated(lambda: getattr(finfo, "machar"))
+
+
+class TestQuantileInterpolationDeprecation(_DeprecationTestCase):
+    # Deprecated 2021-11-08, NumPy 1.22
+    @pytest.mark.parametrize("func",
+        [np.percentile, np.quantile, np.nanpercentile, np.nanquantile])
+    def test_deprecated(self, func):
+        self.assert_deprecated(
+            lambda: func([0., 1.], 0., interpolation="linear"))
+        self.assert_deprecated(
+            lambda: func([0., 1.], 0., interpolation="nearest"))
+
+    @pytest.mark.parametrize("func",
+            [np.percentile, np.quantile, np.nanpercentile, np.nanquantile])
+    def test_both_passed(self, func):
+        with warnings.catch_warnings():
+            # catch the DeprecationWarning so that it does not raise:
+            warnings.simplefilter("always", DeprecationWarning)
+            with pytest.raises(TypeError):
+                func([0., 1.], 0., interpolation="nearest", method="nearest")

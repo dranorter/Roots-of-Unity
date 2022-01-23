@@ -149,7 +149,7 @@ def test_array_impossible_casts(array):
     rt = rational(1, 2)
     if array:
         rt = np.array(rt)
-    with assert_raises(ValueError):
+    with assert_raises(TypeError):
         np.array(rt, dtype="M8")
 
 
@@ -281,6 +281,19 @@ def test_array_astype():
     a = np.array(1000, dtype='i4')
     assert_raises(TypeError, a.astype, 'U1', casting='safe')
 
+@pytest.mark.parametrize("dt", ["S", "U"])
+def test_array_astype_to_string_discovery_empty(dt):
+    # See also gh-19085
+    arr = np.array([""], dtype=object)
+    # Note, the itemsize is the `0 -> 1` logic, which should change.
+    # The important part the test is rather that it does not error.
+    assert arr.astype(dt).dtype.itemsize == np.dtype(f"{dt}1").itemsize
+
+    # check the same thing for `np.can_cast` (since it accepts arrays)
+    assert np.can_cast(arr, dt, casting="unsafe")
+    assert not np.can_cast(arr, dt, casting="same_kind")
+    # as well as for the object as a descriptor:
+    assert np.can_cast("O", dt, casting="unsafe")
 
 @pytest.mark.parametrize("dt", ["d", "f", "S13", "U32"])
 def test_array_astype_to_void(dt):
@@ -585,3 +598,31 @@ def test_broadcast_arrays():
 def test_full_from_list(shape, fill_value, expected_output):
     output = np.full(shape, fill_value)
     assert_equal(output, expected_output)
+
+def test_astype_copyflag():
+    # test the various copyflag options
+    arr = np.arange(10, dtype=np.intp)
+
+    res_true = arr.astype(np.intp, copy=True)
+    assert not np.may_share_memory(arr, res_true)
+    res_always = arr.astype(np.intp, copy=np._CopyMode.ALWAYS)
+    assert not np.may_share_memory(arr, res_always)
+
+    res_false = arr.astype(np.intp, copy=False)
+    # `res_false is arr` currently, but check `may_share_memory`.
+    assert np.may_share_memory(arr, res_false)
+    res_if_needed = arr.astype(np.intp, copy=np._CopyMode.IF_NEEDED)
+    # `res_if_needed is arr` currently, but check `may_share_memory`.
+    assert np.may_share_memory(arr, res_if_needed)
+
+    res_never = arr.astype(np.intp, copy=np._CopyMode.NEVER)
+    assert np.may_share_memory(arr, res_never)
+
+    # Simple tests for when a copy is necessary:
+    res_false = arr.astype(np.float64, copy=False)
+    assert_array_equal(res_false, arr)
+    res_if_needed = arr.astype(np.float64, 
+                               copy=np._CopyMode.IF_NEEDED)
+    assert_array_equal(res_if_needed, arr)
+    assert_raises(ValueError, arr.astype, np.float64,
+                  copy=np._CopyMode.NEVER)

@@ -109,8 +109,10 @@ Exceptions to this rule are documented.
 import sys
 import warnings
 
-from ._globals import ModuleDeprecationWarning, VisibleDeprecationWarning
-from ._globals import _NoValue
+from ._globals import (
+    ModuleDeprecationWarning, VisibleDeprecationWarning,
+    _NoValue, _CopyMode
+)
 
 # We first need to detect if we're being called as part of the numpy setup
 # procedure itself in a reliable manner.
@@ -129,9 +131,6 @@ else:
         its source directory; please exit the numpy source tree, and relaunch
         your python interpreter from there."""
         raise ImportError(msg) from e
-
-    from .version import git_revision as __git_revision__
-    from .version import version as __version__
 
     __all__ = ['ModuleDeprecationWarning',
                'VisibleDeprecationWarning']
@@ -191,6 +190,18 @@ else:
         for n, extended_msg in _type_info
     })
 
+    # Numpy 1.20.0, 2020-10-19
+    __deprecated_attrs__["typeDict"] = (
+        core.numerictypes.typeDict,
+        "`np.typeDict` is a deprecated alias for `np.sctypeDict`."
+    )
+
+    # NumPy 1.22, 2021-10-20
+    __deprecated_attrs__["MachAr"] = (
+        core._machar.MachAr,
+        "`np.MachAr` is deprecated (NumPy 1.22)."
+    )
+
     _msg = (
         "`np.{n}` is a deprecated alias for `np.compat.{n}`. "
         "To silence this warning, use `np.compat.{n}` by itself. "
@@ -222,6 +233,10 @@ else:
     __all__.extend(_mat.__all__)
     __all__.extend(lib.__all__)
     __all__.extend(['linalg', 'fft', 'random', 'ctypeslib', 'ma'])
+
+    # Remove one of the two occurrences of `issubdtype`, which is exposed as
+    # both `numpy.core.issubdtype` and `numpy.lib.issubdtype`.
+    __all__.remove('issubdtype')
 
     # These are exported by np.core, but are replaced by the builtins below
     # remove them to ensure that we don't end up with `np.long == np.int_`,
@@ -260,69 +275,53 @@ else:
     oldnumeric = 'removed'
     numarray = 'removed'
 
-    if sys.version_info[:2] >= (3, 7):
-        # module level getattr is only supported in 3.7 onwards
-        # https://www.python.org/dev/peps/pep-0562/
-        def __getattr__(attr):
-            # Warn for expired attributes, and return a dummy function
-            # that always raises an exception.
-            try:
-                msg = __expired_functions__[attr]
-            except KeyError:
-                pass
-            else:
-                warnings.warn(msg, DeprecationWarning, stacklevel=2)
+    def __getattr__(attr):
+        # Warn for expired attributes, and return a dummy function
+        # that always raises an exception.
+        try:
+            msg = __expired_functions__[attr]
+        except KeyError:
+            pass
+        else:
+            warnings.warn(msg, DeprecationWarning, stacklevel=2)
 
-                def _expired(*args, **kwds):
-                    raise RuntimeError(msg)
+            def _expired(*args, **kwds):
+                raise RuntimeError(msg)
 
-                return _expired
+            return _expired
 
-            # Emit warnings for deprecated attributes
-            try:
-                val, msg = __deprecated_attrs__[attr]
-            except KeyError:
-                pass
-            else:
-                warnings.warn(msg, DeprecationWarning, stacklevel=2)
-                return val
+        # Emit warnings for deprecated attributes
+        try:
+            val, msg = __deprecated_attrs__[attr]
+        except KeyError:
+            pass
+        else:
+            warnings.warn(msg, DeprecationWarning, stacklevel=2)
+            return val
 
-            # Importing Tester requires importing all of UnitTest which is not a
-            # cheap import Since it is mainly used in test suits, we lazy import it
-            # here to save on the order of 10 ms of import time for most users
-            #
-            # The previous way Tester was imported also had a side effect of adding
-            # the full `numpy.testing` namespace
-            if attr == 'testing':
-                import numpy.testing as testing
-                return testing
-            elif attr == 'Tester':
-                from .testing import Tester
-                return Tester
+        # Importing Tester requires importing all of UnitTest which is not a
+        # cheap import Since it is mainly used in test suits, we lazy import it
+        # here to save on the order of 10 ms of import time for most users
+        #
+        # The previous way Tester was imported also had a side effect of adding
+        # the full `numpy.testing` namespace
+        if attr == 'testing':
+            import numpy.testing as testing
+            return testing
+        elif attr == 'Tester':
+            from .testing import Tester
+            return Tester
 
-            raise AttributeError("module {!r} has no attribute "
-                                 "{!r}".format(__name__, attr))
+        raise AttributeError("module {!r} has no attribute "
+                             "{!r}".format(__name__, attr))
 
-        def __dir__():
-            return list(globals().keys() | {'Tester', 'testing'})
-
-    else:
-        # We don't actually use this ourselves anymore, but I'm not 100% sure that
-        # no-one else in the world is using it (though I hope not)
-        from .testing import Tester
-
-        # We weren't able to emit a warning about these, so keep them around
-        globals().update({
-            k: v
-            for k, (v, msg) in __deprecated_attrs__.items()
-        })
-
+    def __dir__():
+        return list(globals().keys() | {'Tester', 'testing'})
 
     # Pytest testing
     from numpy._pytesttester import PytestTester
     test = PytestTester(__name__)
     del PytestTester
-
 
     def _sanity_check():
         """
@@ -373,10 +372,10 @@ else:
                 error_message = "{}: {}".format(w[-1].category.__name__, str(w[-1].message))
                 msg = (
                     "Polyfit sanity test emitted a warning, most likely due "
-                    "to using a buggy Accelerate backend. If you compiled "
-                    "yourself, more information is available at "
-                    "https://numpy.org/doc/stable/user/building.html#accelerated-blas-lapack-libraries "
-                    "Otherwise report this to the vendor "
+                    "to using a buggy Accelerate backend."
+                    "\nIf you compiled yourself, more information is available at:"
+                    "\nhttps://numpy.org/doc/stable/user/building.html#accelerated-blas-lapack-libraries"
+                    "\nOtherwise report this to the vendor "
                     "that provided NumPy.\n{}\n".format(error_message))
                 raise RuntimeError(msg)
     del _mac_os_check
@@ -408,3 +407,12 @@ else:
 
     # Note that this will currently only make a difference on Linux
     core.multiarray._set_madvise_hugepage(use_hugepage)
+
+    # Give a warning if NumPy is reloaded or imported on a sub-interpreter
+    # We do this from python, since the C-module may not be reloaded and
+    # it is tidier organized.
+    core.multiarray._multiarray_umath._reload_guard()
+
+
+# get the version using versioneer
+from .version import __version__, git_revision as __git_version__

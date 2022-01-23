@@ -28,19 +28,18 @@ class SubArray(np.ndarray):
         return x
 
     def __array_finalize__(self, obj):
-        if callable(getattr(super(SubArray, self),
-                            '__array_finalize__', None)):
-            super(SubArray, self).__array_finalize__(obj)
+        if callable(getattr(super(), '__array_finalize__', None)):
+            super().__array_finalize__(obj)
         self.info = getattr(obj, 'info', {}).copy()
         return
 
     def __add__(self, other):
-        result = super(SubArray, self).__add__(other)
+        result = super().__add__(other)
         result.info['added'] = result.info.get('added', 0) + 1
         return result
 
     def __iadd__(self, other):
-        result = super(SubArray, self).__iadd__(other)
+        result = super().__iadd__(other)
         result.info['iadded'] = result.info.get('iadded', 0) + 1
         return result
 
@@ -51,7 +50,7 @@ subarray = SubArray
 class SubMaskedArray(MaskedArray):
     """Pure subclass of MaskedArray, keeping some info on subclass."""
     def __new__(cls, info=None, **kwargs):
-        obj = super(SubMaskedArray, cls).__new__(cls, **kwargs)
+        obj = super().__new__(cls, **kwargs)
         obj._optinfo['info'] = info
         return obj
 
@@ -123,12 +122,11 @@ class ComplicatedSubArray(SubArray):
     def __setitem__(self, item, value):
         # validation ensures direct assignment with ndarray or
         # masked_print_option will fail
-        super(ComplicatedSubArray, self).__setitem__(
-            item, self._validate_input(value))
+        super().__setitem__(item, self._validate_input(value))
 
     def __getitem__(self, item):
         # ensure getter returns our own class also for scalars
-        value = super(ComplicatedSubArray, self).__getitem__(item)
+        value = super().__getitem__(item)
         if not isinstance(value, np.ndarray):  # scalar
             value = value.__array__().view(ComplicatedSubArray)
         return value
@@ -143,7 +141,7 @@ class ComplicatedSubArray(SubArray):
         y[:] = value
 
     def __array_wrap__(self, obj, context=None):
-        obj = super(ComplicatedSubArray, self).__array_wrap__(obj, context)
+        obj = super().__array_wrap__(obj, context)
         if context is not None and context[0] is np.multiply:
             obj.info['multiplied'] = obj.info.get('multiplied', 0) + 1
 
@@ -345,3 +343,45 @@ class TestSubclassing:
         diff2 = arr1 - arr2
         assert_('info' in diff2._optinfo)
         assert_(diff2._optinfo['info'] == 'test')
+
+
+class ArrayNoInheritance:
+    """Quantity-like class that does not inherit from ndarray"""
+    def __init__(self, data, units):
+        self.magnitude = data
+        self.units = units
+
+    def __getattr__(self, attr):
+        return getattr(self.magnitude, attr)
+
+
+def test_array_no_inheritance():
+    data_masked = np.ma.array([1, 2, 3], mask=[True, False, True])
+    data_masked_units = ArrayNoInheritance(data_masked, 'meters')
+
+    # Get the masked representation of the Quantity-like class
+    new_array = np.ma.array(data_masked_units)
+    assert_equal(data_masked.data, new_array.data)
+    assert_equal(data_masked.mask, new_array.mask)
+    # Test sharing the mask
+    data_masked.mask = [True, False, False]
+    assert_equal(data_masked.mask, new_array.mask)
+    assert_(new_array.sharedmask)
+
+    # Get the masked representation of the Quantity-like class
+    new_array = np.ma.array(data_masked_units, copy=True)
+    assert_equal(data_masked.data, new_array.data)
+    assert_equal(data_masked.mask, new_array.mask)
+    # Test that the mask is not shared when copy=True
+    data_masked.mask = [True, False, True]
+    assert_equal([True, False, False], new_array.mask)
+    assert_(not new_array.sharedmask)
+
+    # Get the masked representation of the Quantity-like class
+    new_array = np.ma.array(data_masked_units, keep_mask=False)
+    assert_equal(data_masked.data, new_array.data)
+    # The change did not affect the original mask
+    assert_equal(data_masked.mask, [True, False, True])
+    # Test that the mask is False and not shared when keep_mask=False
+    assert_(not new_array.mask)
+    assert_(not new_array.sharedmask)

@@ -276,8 +276,6 @@ Test the header writing.
 '''
 import sys
 import os
-import shutil
-import tempfile
 import warnings
 import pytest
 from io import BytesIO
@@ -402,7 +400,7 @@ class BytesIOSRandomSize(BytesIO):
     def read(self, size=None):
         import random
         size = random.randint(1, size)
-        return super(BytesIOSRandomSize, self).read(size)
+        return super().read(size)
 
 
 def roundtrip(arr):

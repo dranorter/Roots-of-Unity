@@ -10,7 +10,7 @@ from numpy.testing import (
     assert_warns, assert_no_warnings, assert_array_equal,
     assert_array_almost_equal, suppress_warnings)
 
-from numpy.random import Generator, MT19937, SeedSequence
+from numpy.random import Generator, MT19937, SeedSequence, RandomState
 
 random = Generator(MT19937())
 
@@ -136,12 +136,14 @@ class TestMultinomial:
         contig = random.multinomial(100, pvals=np.ascontiguousarray(pvals))
         assert_array_equal(non_contig, contig)
 
-    def test_multidimensional_pvals(self):
-        assert_raises(ValueError, random.multinomial, 10, [[0, 1]])
-        assert_raises(ValueError, random.multinomial, 10, [[0], [1]])
-        assert_raises(ValueError, random.multinomial, 10, [[[0], [1]], [[1], [0]]])
-        assert_raises(ValueError, random.multinomial, 10, np.array([[0, 1], [1, 0]]))
-
+    def test_multinomial_pvals_float32(self):
+        x = np.array([9.9e-01, 9.9e-01, 1.0e-09, 1.0e-09, 1.0e-09, 1.0e-09,
+                      1.0e-09, 1.0e-09, 1.0e-09, 1.0e-09], dtype=np.float32)
+        pvals = x / x.sum()
+        random = Generator(MT19937(1432985819))
+        match = r"[\w\s]*pvals array is cast to 64-bit floating"
+        with pytest.raises(ValueError, match=match):
+            random.multinomial(1, pvals)
 
 class TestMultivariateHypergeometric:
 
@@ -766,6 +768,18 @@ class TestRandomDist:
         desired = 0.0969992
         assert_array_almost_equal(actual, desired, decimal=7)
 
+    @pytest.mark.parametrize('dtype, uint_view_type',
+                             [(np.float32, np.uint32),
+                              (np.float64, np.uint64)])
+    def test_random_distribution_of_lsb(self, dtype, uint_view_type):
+        random = Generator(MT19937(self.seed))
+        sample = random.random(100000, dtype=dtype)
+        num_ones_in_lsb = np.count_nonzero(sample.view(uint_view_type) & 1)
+        # The probability of a 1 in the least significant bit is 0.25.
+        # With a sample size of 100000, the probability that num_ones_in_lsb
+        # is outside the following range is less than 5e-11.
+        assert 24100 < num_ones_in_lsb < 25900
+
     def test_random_unsupported_type(self):
         assert_raises(TypeError, random.random, dtype='int32')
 
@@ -1244,9 +1258,9 @@ class TestRandomDist:
     def test_geometric(self):
         random = Generator(MT19937(self.seed))
         actual = random.geometric(.123456789, size=(3, 2))
-        desired = np.array([[ 1, 10],
-                            [ 1, 12],
-                            [ 9, 10]])
+        desired = np.array([[1, 11],
+                            [1, 12],
+                            [11, 17]])
         assert_array_equal(actual, desired)
 
     def test_geometric_exceptions(self):
@@ -1549,9 +1563,9 @@ class TestRandomDist:
     def test_rayleigh(self):
         random = Generator(MT19937(self.seed))
         actual = random.rayleigh(scale=10, size=(3, 2))
-        desired = np.array([[ 4.51734079831581, 15.6802442485758 ],
-                            [ 4.19850651287094, 17.08718809823704],
-                            [14.7907457708776 , 15.85545333419775]])
+        desired = np.array([[4.19494429102666, 16.66920198906598],
+                            [3.67184544902662, 17.74695521962917],
+                            [16.27935397855501, 21.08355560691792]])
         assert_array_almost_equal(actual, desired, decimal=14)
 
     def test_rayleigh_0(self):
@@ -1679,6 +1693,21 @@ class TestRandomDist:
         # DBL_MAX by increasing fmin a bit
         random.uniform(low=np.nextafter(fmin, 1), high=fmax / 1e17)
 
+    def test_uniform_zero_range(self):
+        func = random.uniform
+        result = func(1.5, 1.5)
+        assert_allclose(result, 1.5)
+        result = func([0.0, np.pi], [0.0, np.pi])
+        assert_allclose(result, [0.0, np.pi])
+        result = func([[2145.12], [2145.12]], [2145.12, 2145.12])
+        assert_allclose(result, 2145.12 + np.zeros((2, 2)))
+
+    def test_uniform_neg_range(self):
+        func = random.uniform
+        assert_raises(ValueError, func, 2, 1)
+        assert_raises(ValueError, func,  [1, 2], [1, 1])
+        assert_raises(ValueError, func,  [[0, 1],[2, 3]], 2)
+
     def test_scalar_exception_propagation(self):
         # Tests that exceptions are correctly propagated in distributions
         # when called with objects that throw exceptions when converted to
@@ -1719,6 +1748,27 @@ class TestRandomDist:
         random = Generator(MT19937(self.seed))
         r = random.vonmises(mu=0., kappa=np.nan)
         assert_(np.isnan(r))
+
+    @pytest.mark.parametrize("kappa", [1e4, 1e15])
+    def test_vonmises_large_kappa(self, kappa):
+        random = Generator(MT19937(self.seed))
+        rs = RandomState(random.bit_generator)
+        state = random.bit_generator.state
+
+        random_state_vals = rs.vonmises(0, kappa, size=10)
+        random.bit_generator.state = state
+        gen_vals = random.vonmises(0, kappa, size=10)
+        if kappa < 1e6:
+            assert_allclose(random_state_vals, gen_vals)
+        else:
+            assert np.all(random_state_vals != gen_vals)
+
+    @pytest.mark.parametrize("mu", [-7., -np.pi, -3.1, np.pi, 3.2])
+    @pytest.mark.parametrize("kappa", [1e-9, 1e-6, 1, 1e3, 1e15])
+    def test_vonmises_large_kappa_range(self, mu, kappa):
+        random = Generator(MT19937(self.seed))
+        r = random.vonmises(mu, kappa, 50)
+        assert_(np.all(r > -np.pi) and np.all(r <= np.pi))
 
     def test_wald(self):
         random = Generator(MT19937(self.seed))
@@ -2071,7 +2121,11 @@ class TestBroadcast:
     def test_rayleigh(self):
         scale = [1]
         bad_scale = [-1]
-        desired = np.array([0.60439534475066, 0.66120048396359, 1.67873398389499])
+        desired = np.array(
+            [1.1597068009872629,
+             0.6539188836253857,
+             1.1981526554349398]
+        )
 
         random = Generator(MT19937(self.seed))
         actual = random.rayleigh(scale * 3)
@@ -2301,6 +2355,64 @@ class TestBroadcast:
                             [2, 3, 6, 4, 2, 3]], dtype=np.int64)
         assert_array_equal(actual, desired)
 
+        random = Generator(MT19937(self.seed))
+        actual = random.multinomial([5, 20], [[1 / 6.] * 6] * 2)
+        desired = np.array([[0, 0, 2, 1, 2, 0],
+                            [2, 3, 6, 4, 2, 3]], dtype=np.int64)
+        assert_array_equal(actual, desired)
+
+        random = Generator(MT19937(self.seed))
+        actual = random.multinomial([[5], [20]], [[1 / 6.] * 6] * 2)
+        desired = np.array([[[0, 0, 2, 1, 2, 0],
+                             [0, 0, 2, 1, 1, 1]],
+                            [[4, 2, 3, 3, 5, 3],
+                             [7, 2, 2, 1, 4, 4]]], dtype=np.int64)
+        assert_array_equal(actual, desired)
+
+    @pytest.mark.parametrize("n", [10,
+                                   np.array([10, 10]),
+                                   np.array([[[10]], [[10]]])
+                                   ]
+                             )
+    def test_multinomial_pval_broadcast(self, n):
+        random = Generator(MT19937(self.seed))
+        pvals = np.array([1 / 4] * 4)
+        actual = random.multinomial(n, pvals)
+        n_shape = tuple() if isinstance(n, int) else n.shape
+        expected_shape = n_shape + (4,)
+        assert actual.shape == expected_shape
+        pvals = np.vstack([pvals, pvals])
+        actual = random.multinomial(n, pvals)
+        expected_shape = np.broadcast_shapes(n_shape, pvals.shape[:-1]) + (4,)
+        assert actual.shape == expected_shape
+
+        pvals = np.vstack([[pvals], [pvals]])
+        actual = random.multinomial(n, pvals)
+        expected_shape = np.broadcast_shapes(n_shape, pvals.shape[:-1])
+        assert actual.shape == expected_shape + (4,)
+        actual = random.multinomial(n, pvals, size=(3, 2) + expected_shape)
+        assert actual.shape == (3, 2) + expected_shape + (4,)
+
+        with pytest.raises(ValueError):
+            # Ensure that size is not broadcast
+            actual = random.multinomial(n, pvals, size=(1,) * 6)
+
+    def test_invalid_pvals_broadcast(self):
+        random = Generator(MT19937(self.seed))
+        pvals = [[1 / 6] * 6, [1 / 4] * 6]
+        assert_raises(ValueError, random.multinomial, 1, pvals)
+        assert_raises(ValueError, random.multinomial, 6, 0.5)
+
+    def test_empty_outputs(self):
+        random = Generator(MT19937(self.seed))
+        actual = random.multinomial(np.empty((10, 0, 6), "i8"), [1 / 6] * 6)
+        assert actual.shape == (10, 0, 6, 6)
+        actual = random.multinomial(12, np.empty((10, 0, 10)))
+        assert actual.shape == (10, 0, 10)
+        actual = random.multinomial(np.empty((3, 0, 7), "i8"),
+                                    np.empty((3, 0, 7, 4)))
+        assert actual.shape == (3, 0, 7, 4)
+
 
 class TestThread:
     # make sure each state produces the same sequence even in threads
@@ -2511,3 +2623,49 @@ def test_broadcast_size_scalar():
     random.normal(mu, sigma, size=3)
     with pytest.raises(ValueError):
         random.normal(mu, sigma, size=2)
+
+
+def test_ragged_shuffle():
+    # GH 18142
+    seq = [[], [], 1]
+    gen = Generator(MT19937(0))
+    assert_no_warnings(gen.shuffle, seq)
+    assert seq == [1, [], []]
+
+
+@pytest.mark.parametrize("high", [-2, [-2]])
+@pytest.mark.parametrize("endpoint", [True, False])
+def test_single_arg_integer_exception(high, endpoint):
+    # GH 14333
+    gen = Generator(MT19937(0))
+    msg = 'high < 0' if endpoint else 'high <= 0'
+    with pytest.raises(ValueError, match=msg):
+        gen.integers(high, endpoint=endpoint)
+    msg = 'low > high' if endpoint else 'low >= high'
+    with pytest.raises(ValueError, match=msg):
+        gen.integers(-1, high, endpoint=endpoint)
+    with pytest.raises(ValueError, match=msg):
+        gen.integers([-1], high, endpoint=endpoint)
+
+
+@pytest.mark.parametrize("dtype", ["f4", "f8"])
+def test_c_contig_req_out(dtype):
+    # GH 18704
+    out = np.empty((2, 3), order="F", dtype=dtype)
+    shape = [1, 2, 3]
+    with pytest.raises(ValueError, match="Supplied output array"):
+        random.standard_gamma(shape, out=out, dtype=dtype)
+    with pytest.raises(ValueError, match="Supplied output array"):
+        random.standard_gamma(shape, out=out, size=out.shape, dtype=dtype)
+
+
+@pytest.mark.parametrize("dtype", ["f4", "f8"])
+@pytest.mark.parametrize("order", ["F", "C"])
+@pytest.mark.parametrize("dist", [random.standard_normal, random.random])
+def test_contig_req_out(dist, order, dtype):
+    # GH 18704
+    out = np.empty((2, 3), dtype=dtype, order=order)
+    variates = dist(out=out, dtype=dtype)
+    assert variates is out
+    variates = dist(out=out, dtype=dtype, size=out.shape)
+    assert variates is out

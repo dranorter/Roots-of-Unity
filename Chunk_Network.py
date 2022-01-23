@@ -5,7 +5,9 @@ from godot.bindings import _File as File
 from godot import *
 import random as r
 import numpy as np
+import numpy.lib.mixins
 import numbers, time, math
+from scipy.special import comb
 from itertools import chain
 from debugging import debugging
 import traceback
@@ -3714,19 +3716,36 @@ class Chunk:
     # print("Final time:        "+ str(final_time - add_collider))
 
 
-class GoldenField:
+class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
+
     phi = 1.61803398874989484820458683
 
+    def fib(self, n):
+        return self._fib(n)[0]
+
+    def _fib(self, n):
+        if n == 0:
+            return (0,1)
+        else:
+            a, b = self._fib(n//2)
+            c = a * (b * 2 - a)
+            d = a * a + b * b
+            if n % 2 == 0:
+                return (c, d)
+            else:
+                return (d, c + d)
+
     def __init__(self, values):
-        self.ndarray = np.array(values, dtype=np.int16)
-        if self.ndarray.shape[-1] != 2:
-            raise Exception("Not a valid golden field array; last axis must be of size 2.")
+        self.ndarray = np.array(values, dtype=np.int64)
+        # To accommodate quotients, format is [a,b,c] representing (a + bφ)/c.
+        if self.ndarray.shape[-1] != 3:
+            raise Exception("Not a valid golden field array; last axis must be of size 3.")
 
     def __repr__(self):
         return f"{self.__class__.__name__}({list(self.ndarray)})"
 
     def __array__(self, dtype=None):
-        return self.ndarray[..., 0] + self.phi * self.ndarray[..., 1]
+        return (self.ndarray[..., 0] + self.phi * self.ndarray[..., 1])/self.ndarray[...,2]
 
     def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
         if method == '__call__':
@@ -3744,41 +3763,165 @@ class GoldenField:
             if not all_integer:
                 # If we're not dealing with integers, there's no point in
                 # staying a GoldenField.
+                #TODO Could support fractions.Fraction/numbers.Rational, tho I don't know when it's ever used.
                 return ufunc(np.array(self), *inputs, **kwargs)
 
             if ufunc == np.add:
-                returnval = np.zeros(self.ndarray.shape)
-                returnval = returnval + self.ndarray
+                # (a + bφ)/c + (d + eφ)/f = ( (fa+cd) + (fb+ce)φ )/cf
+                returnval = np.zeros(self.ndarray.shape, dtype=np.int64)
+                returnval[...,2] = 1
                 for input in inputs:
+                    old_rv = returnval.copy()
                     if isinstance(input, self.__class__):
-                        returnval = returnval + input.ndarray
+                        returnval[...,0] = old_rv[...,0]*input.ndarray[...,2] + input.ndarray[...,0]*old_rv[...,2]
+                        returnval[...,1] = old_rv[...,1]*input.ndarray[...,2] + input.ndarray[...,1]*old_rv[...,2]
+                        returnval[...,2] = old_rv[...,2]*input.ndarray[...,2]
+                        # Now simplify
+                        # TODO Does doing this for every input slow things down?
+                        #returnval = returnval/np.gcd(returnval[...,0],returnval[...,1],returnval[...,2]).repeat(3).reshape(-1,3)
                     else:
                         # Just add to the integer part
                         returnval[..., 0] = returnval[..., 0] + input
                 return self.__class__(returnval)
-            elif ufunc == np.multiply:
-                returnval = self.ndarray.copy()
-                for input in inputs:
-                    intpart = np.zeros(self.ndarray[..., 0].shape)
-                    phipart = np.zeros(self.ndarray[..., 0].shape)
+            elif ufunc == np.subtract:
+                # (a + bφ)/c - (d + eφ)/f = ( (fa-cd) + (fb-ce)φ )/cf
+
+                returnval = np.zeros(self.ndarray.shape)
+                # First argument is add, not subtract
+                if isinstance(inputs[0], self.__class__):
+                    returnval = inputs[0].ndarray.copy()
+                elif isinstance(inputs[0], np.ndarray):
+                    returnval[..., 0] = inputs[0]
+                    returnval[..., 2] = 1
+                elif isinstance(inputs[0], numbers.Integral):
+                    returnval[..., 0] = inputs[0]
+                    returnval[..., 2] = 1
+                else:
+                    return NotImplemented
+                for input in inputs[1:]:
+                    old_rv = returnval.copy()
                     if isinstance(input, self.__class__):
-                        intpart = returnval[..., 0] * input.ndarray[..., 0]
-                        phipart = returnval[..., 0] * input.ndarray[..., 1] + returnval[..., 1] * input.ndarray[..., 0]
-                        intpart = intpart + returnval[..., 1] * input.ndarray[..., 1]
-                        phipart = phipart + returnval[..., 1] * input.ndarray[..., 1]
+                        returnval[...,0] = old_rv[...,0]*input.ndarray[...,2] - input.ndarray[...,0]*old_rv[...,2]
+                        returnval[...,1] = old_rv[...,1]*input.ndarray[...,2] - input.ndarray[...,1]*old_rv[...,2]
+                        returnval[...,2] = old_rv[...,2]*input.ndarray[...,2]
+                        # Now simplify
+                        #returnval = returnval/np.gcd(returnval[...,0],returnval[...,1],returnval[...,2]).repeat(3).reshape(-1,3)
+                    else:
+                        # Just add to the integer part
+                        returnval[..., 0] = returnval[..., 0] - input
+                return self.__class__(returnval)
+            elif ufunc == np.multiply:
+                # (a + bφ)/c * (d + eφ)/f = ( (ad + be) + (ae + bd + be)φ)/cf
+
+                # Multiplicative identity is [1,0,1]
+                returnval = np.ones(self.ndarray.shape, dtype=np.int64)
+                returnval[...,1] = 0
+                for input in inputs:
+                    old_rv = returnval.copy()
+                    if isinstance(input, self.__class__):
+                        returnval[...,0] = old_rv[...,0]*input.ndarray[...,0] + old_rv[...,1]*input.ndarray[...,1]
+                        returnval[...,1] = old_rv[...,0]*input.ndarray[...,1] + old_rv[...,1]*(input.ndarray[...,0]+input.ndarray[...,1])
+                        returnval[...,2] = old_rv[...,2]*input.ndarray[...,2]
+                        # Simplify
+                        #returnval = returnval / np.gcd(returnval[..., 0], returnval[..., 1], returnval[..., 2]).repeat(3).reshape(-1,3)
                     elif isinstance(input, np.ndarray):
                         # Multiply both parts by the array
-                        intpart = returnval[..., 0] * input
-                        phipart = returnval[..., 1] * input
+                        returnval[...,0] = returnval[..., 0] * input
+                        returnval[...,1] = returnval[..., 1] * input
+                        # Simplify
+                        #returnval = returnval / np.gcd(returnval[..., 0], returnval[..., 1], returnval[..., 2]).repeat(3).reshape(-1,3)
                     elif isinstance(input, numbers.Integral):
-                        intpart = returnval[..., 0] * input
-                        phipart = returnval[..., 1] * input
+                        returnval[...,0] = returnval[..., 0] * input
+                        returnval[...,1] = returnval[..., 1] * input
+                        # Simplify
+                        #returnval = returnval / np.gcd(returnval[..., 0], returnval[..., 1], returnval[..., 2]).repeat(3).reshape(-1,3)
                     else:
                         return NotImplemented
-                    returnval[..., 0] = intpart
-                    returnval[..., 1] = phipart
                 return self.__class__(returnval)
+            elif ufunc == np.true_divide or ufunc == np.floor_divide:
+                returnval = np.zeros(self.ndarray.shape)
+                # First argument is multiply, not divide
+                if isinstance(inputs[0], self.__class__):
+                    returnval = inputs[0].ndarray.copy()
+                elif isinstance(inputs[0], np.ndarray):
+                    returnval[...,0] = inputs[0]
+                    returnval[...,2] = 1
+                elif isinstance(inputs[0], numbers.Integral):
+                    returnval[...,0] = inputs[0]
+                    returnval[...,2] = 1
+                else:
+                    return NotImplemented
+                # (a + bφ)/c / (d + eφ)/f = ( f(ad + ae - be) + f(-ae + bd)φ ) / c(dd + de - ee)
+                for input in inputs[1:]:
+                    print(input)
+                    print(returnval)
+                    old_rv = returnval.copy()
+                    if isinstance(input, self.__class__):
+                        returnval[...,0] = input.ndarray[...,2]*(old_rv[...,0]*(input.ndarray[...,0] + input.ndarray[...,1]) - old_rv[...,1]*input.ndarray[...,1])
+                        returnval[...,1] = input.ndarray[...,2]*(-old_rv[...,0]*input.ndarray[...,1] + old_rv[...,1]*input.ndarray[...,0])
+                        returnval[...,2] = old_rv[...,2]*(input.ndarray[...,0]*(input.ndarray[...,0] + input.ndarray[...,1]) - input.ndarray[...,1]*input.ndarray[...,1])
+                    elif isinstance(input, np.ndarray):
+                        returnval[...,2] = returnval[...,2] * input
+                    elif isinstance(input, numbers.Integral):
+                        returnval[...,2] = returnval[...,2] * input
+                    else:
+                        return NotImplemented
+                return self.__class__(returnval)
+            elif ufunc == np.power:
+                # Powers of phi can be taken using the fibonacci sequence.
+                # pow(φ, n) = F(n) + F(n + 1)φ
+                # pow((a + bφ)/c, n) = ( Σ(i..0..n)(a^i * b^(n-i) * F(n-i+1) * (i C n)) + Σ(i..0..n)(a^i * b^(n-i) * F(n-i))φ * (i C n)) / c^n
+                # Currently support arrays as the base but only plain integers as the exporent.
+                base = np.zeros_like(self.ndarray)
+                returnval = np.zeros_like(self.ndarray)
+                if isinstance(inputs[0], self.__class__):
+                    base = inputs[0].ndarray.copy()
+                elif isinstance(inputs[0],np.ndarray):
+                    base[...,0] = inputs[0]
+                    base[...,2] = 1
+                else:
+                    # A plain number should be broadcast to an array but I don't know how to handle that yet.
+                    return NotImplemented
+                if isinstance(inputs[1], self.__class__):
+                    # Exponents including phi don't stay in the golden field.
+                    # We could check whether inputs[1] is actually all rationals, but purely based on type, this
+                    # case shouldn't be implemented.
+                    return NotImplemented
+                elif isinstance(inputs[1], np.ndarray) and inputs[1].dtype.kind == 'i':
+                    # We should be able to handle this, but I haven't figured out a fast implementation yet and
+                    # I also don't have a use case.
+                    return NotImplemented
+                elif isinstance(inputs[1], numbers.Integral):
+                    # This, we can handle.
+                    if inputs[1] == 0:
+                        returnval = np.ones_like(base)
+                    else:
+                        exponent = abs(inputs[1])
+                        i = np.arange(exponent+1)
+                        fibs = [0,1]
+                        while len(fibs) <= exponent + 1:
+                            fibs.append(fibs[-1]+fibs[-2])
+                        fibs = np.array(fibs)
+                        returnval[..., 0] = np.sum(np.power(np.dstack([base[...,0]]*(exponent+1)),i)
+                                                 *np.power(np.dstack([base[...,1]]*(exponent+1)),inputs[1]-i)
+                                                   *np.flip(fibs[:-1]) * np.round(comb(exponent, i)),axis=-1)
+                        returnval[..., 1] = np.sum(np.power(np.dstack([base[..., 0]] * (exponent + 1)), i)
+                                                   * np.power(np.dstack([base[..., 1]] * (exponent + 1)),
+                                                              inputs[1] - i)
+                                                   * np.flip(fibs[1:] * np.round(comb(exponent, i))),axis=-1)
+                        returnval[..., 2] = pow(base[...,2], exponent)
+                        if inputs[1] < 0:
+                            returnval =  (1/self.__class__(returnval)).ndarray
+                    return self.__class__(returnval)
+                else:
+                    return NotImplemented
             else:
                 return NotImplemented
         else:
             return NotImplemented
+
+    def simplify(self):
+        self.ndarray = self.ndarray // np.gcd(self.ndarray[...,0], self.ndarray[...,1], self.ndarray[...,2]).repeat(3).reshape(-1,3)
+        return self
+
+test = GoldenField([[1,0,1],[0,1,1]]); test2 = GoldenField([[0,0,1],[2,-1,1]])
