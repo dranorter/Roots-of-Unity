@@ -3869,7 +3869,7 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
                 return self.__class__(returnval)
             elif ufunc == np.power:
                 # Powers of phi can be taken using the fibonacci sequence.
-                # pow(φ, n) = F(n) + F(n + 1)φ
+                # pow(φ, n) = F(n-1) + F(n)φ
                 # pow((a + bφ)/c, n) = ( Σ(i..0..n)(a^i * b^(n-i) * F(n-i+1) * (i C n)) + Σ(i..0..n)(a^i * b^(n-i) * F(n-i))φ * (i C n)) / c^n
                 # Currently support arrays as the base but only plain integers as the exporent.
                 base = np.zeros_like(self.ndarray)
@@ -3886,6 +3886,7 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
                     # Exponents including phi don't stay in the golden field.
                     # We could check whether inputs[1] is actually all rationals, but purely based on type, this
                     # case shouldn't be implemented.
+                    #TODO Numpy isn't converting us automatically to a plain number like I expected.
                     return NotImplemented
                 elif isinstance(inputs[1], np.ndarray) and inputs[1].dtype.kind == 'i':
                     # We should be able to handle this, but I haven't figured out a fast implementation yet and
@@ -3894,20 +3895,23 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
                 elif isinstance(inputs[1], numbers.Integral):
                     # This, we can handle.
                     if inputs[1] == 0:
+                        # We could handle 0 directly, but we know what the value would be so that'd be silly.
                         returnval = np.ones_like(base)
+                        returnval[...,1] = 0
                     else:
                         exponent = abs(inputs[1])
                         i = np.arange(exponent+1)
-                        fibs = [0,1]
+                        # We have to include the value of F(-1)
+                        fibs = [1,0,1]
                         while len(fibs) <= exponent + 1:
                             fibs.append(fibs[-1]+fibs[-2])
                         fibs = np.array(fibs)
                         returnval[..., 0] = np.sum(np.power(np.dstack([base[...,0]]*(exponent+1)),i)
-                                                 *np.power(np.dstack([base[...,1]]*(exponent+1)),inputs[1]-i)
+                                                 *np.power(np.dstack([base[...,1]]*(exponent+1)),exponent-i)
                                                    *np.flip(fibs[:-1]) * np.round(comb(exponent, i)),axis=-1)
                         returnval[..., 1] = np.sum(np.power(np.dstack([base[..., 0]] * (exponent + 1)), i)
                                                    * np.power(np.dstack([base[..., 1]] * (exponent + 1)),
-                                                              inputs[1] - i)
+                                                              exponent - i)
                                                    * np.flip(fibs[1:] * np.round(comb(exponent, i))),axis=-1)
                         returnval[..., 2] = pow(base[...,2], exponent)
                         if inputs[1] < 0:
