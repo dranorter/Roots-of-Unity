@@ -3715,7 +3715,6 @@ class Chunk:
     # print("Add Collider:      "+str(add_collider - add_surface))
     # print("Final time:        "+ str(final_time - add_collider))
 
-
 class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
 
     phi = 1.61803398874989484820458683
@@ -3739,7 +3738,8 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
                 return (d, c + d)
 
     def __init__(self, values):
-        """Format is [a,b,c] representing (a + bφ)/(c)."""
+        """Format is [a,b,c] representing (a + bφ)/(c+1).
+        Note the one-off denominator; so 1 is [1,0,0]."""
         values = np.array(values)
         if values.dtype in [self.golden64, self.golden32]:
             self.ndarray = values
@@ -3747,13 +3747,17 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
             self.ndarray = np.zeros(values[...,0].shape, dtype=self.golden64)
             self.ndarray['int'] = values[...,0]
             self.ndarray['phi'] = values[...,1]
-            self.ndarray['dmo'] = values[...,2] -1
+            self.ndarray['dmo'] = values[...,2]
         else:
             # I'd like to accept other shapes, but that could lead to misunderstandings.
             raise ValueError("Not a valid golden field array; last axis must be of size 3.")
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({list(self.ndarray)})"
+        if self.ndarray.shape == ():
+            # Zero dimensional arrays must be printed differently
+            return f"{self.__class__.__name__}({self.ndarray})"
+        else:
+            return f"{self.__class__.__name__}({list(self.ndarray)})"
 
     def __array__(self, dtype=None):
         return (self.ndarray['int'] + self.phi * self.ndarray['phi'])/(self.ndarray['dmo']+1)
@@ -3789,8 +3793,8 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
                         returnval['dmo'] = (old_rv['dmo']+1)*(input.ndarray['dmo']+1) - 1
                     else:
                         # Just add to the integer part
-                        returnval['int'] = returnval['int'] + input
-                return self.__class__(returnval)
+                        returnval['int'] = returnval['int'] + input * (returnval['dmo'] + 1)
+                return self.__class__(returnval).simplify()
             elif ufunc == np.subtract:
                 # (a + bφ)/c - (d + eφ)/f = ( (fa-cd) + (fb-ce)φ )/cf
 
@@ -3812,8 +3816,8 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
                         returnval['dmo'] = (old_rv['dmo']+1)*(input.ndarray['dmo']+1)-1
                     else:
                         # Just add to the integer part
-                        returnval['int'] = returnval['int'] - input
-                return self.__class__(returnval)
+                        returnval['int'] = returnval['int'] - input * (returnval['dmo'] + 1)
+                return self.__class__(returnval).simplify()
             elif ufunc == np.multiply:
                 # (a + bφ)/c * (d + eφ)/f = ( (ad + be) + (ae + bd + be)φ)/cf
 
@@ -3835,7 +3839,7 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
                         returnval['phi'] = returnval['phi'] * input
                     else:
                         return NotImplemented
-                return self.__class__(returnval)
+                return self.__class__(returnval).simplify()
             elif ufunc == np.true_divide or ufunc == np.floor_divide:
                 returnval = np.zeros(self.ndarray.shape, dtype=self.golden64)
                 # First argument is multiply, not divide
@@ -3849,8 +3853,6 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
                     return NotImplemented
                 # (a + bφ)/c / (d + eφ)/f = ( f(ad + ae - be) + f(-ae + bd)φ ) / c(dd + de - ee)
                 for input in inputs[1:]:
-                    print(input)
-                    print(returnval)
                     old_rv = returnval.copy()
                     if isinstance(input, self.__class__):
                         returnval['int'] = (input.ndarray['dmo']+1)*(old_rv['int']*(input.ndarray['int'] + input.ndarray['phi']) - old_rv['phi']*input.ndarray['phi'])
@@ -3862,7 +3864,7 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
                         returnval['dmo'] = (returnval['dmo']+1) * input - 1
                     else:
                         return NotImplemented
-                return self.__class__(returnval)
+                return self.__class__(returnval).simplify()
             elif ufunc == np.power:
                 # Powers of phi can be taken using the fibonacci sequence.
                 # pow(φ, n) = F(n-1) + F(n)φ
@@ -3911,13 +3913,21 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
                         returnval['dmo'] = pow((base['dmo']+1), exponent) - 1
                         if inputs[1] < 0:
                             returnval =  (1/self.__class__(returnval)).ndarray
-                    return self.__class__(returnval)
+                    return self.__class__(returnval).simplify()
                 else:
                     return NotImplemented
             else:
                 return NotImplemented
         else:
             return NotImplemented
+
+    def __array_function__(self, func, types, args, kwargs):
+        if func == np.ndarray.__getitem__:
+            return self.ndarray.__getitem__(*args, **kwargs)
+        return NotImplemented
+
+    def __getitem__(self, key):
+        return self.ndarray.__getitem__(key)
 
     @property
     def shape(self):
@@ -3926,8 +3936,8 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
     def simplify(self):
         gcd = np.gcd.reduce([self.ndarray['int'], self.ndarray['phi'], (self.ndarray['dmo']+1)])
         self.ndarray['int'] = self.ndarray['int'] // gcd
-        self.ndarray['phi'] = self.ndarray['int'] // gcd
-        self.ndarray['dmo'] = self.ndarray['int'] // gcd - 1
+        self.ndarray['phi'] = self.ndarray['phi'] // gcd
+        self.ndarray['dmo'] = (self.ndarray['dmo']+1) // gcd - 1
         return self
 
-test = GoldenField([[1,0,1],[0,1,1]]); test2 = GoldenField([[0,0,1],[2,-1,1]])
+test = GoldenField([[1,0,0],[0,1,0], [2, 2, 2]]); test2 = GoldenField([[0,0,0],[2,-1,0], [3, 0, 2]])
