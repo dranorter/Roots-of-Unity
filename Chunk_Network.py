@@ -2339,7 +2339,7 @@ class Chunk:
                     "Got more than one parents for a chunk; a way to handle this is currently not implemented.")
             self.parent = Chunk(self.network, parents[0][0], parents[0][1], self.level + 1)
             # Sanity test: Any new parent should contain the origin.
-            print("Sanity test: is origin inside this? "+str(self.parent.rhomb_contains_point(np.array([0,0,0]))))
+            print("Sanity test: is origin inside this? (should be positive)"+str(self.parent.rhomb_contains_point(np.array([0,0,0]))))
             # We have to set ourselves as a child, in the appropriate place
             # TODO Below line took way to long to get right, for two reasons.
             #  - It's easy to forget Chunk.blocks just stores default template positions, not adding in the chunk's
@@ -3059,7 +3059,17 @@ class Chunk:
         # 0 . 3 3 9 5 0 5 4 4 1 8 3 1 1 7 3 3 7, 0 . 3 3 9 5 0 8 0 1 3 1 7 0 0 9 9 4, 0 . 3 3 9 6 9 5 7 2 0 9 1 1 6 9 6 8 6, 0 . 3 3 9 6 9 8 2 9 2 2 5 0 6 2 2 8 7, 0 . 3 3 9 7 0 0 8 6 3 5 8 9 5 4 8 9,
         # 0 . 3 3 9 9 7 7 1 6 9 6 5 3 0 1 1 8 3, 0 . 3 3 9 9 7 9 7 3 9 0 8 6 9 4 0 5 7, 0 . 3 4 0 0 3 1 7 7 0 1 2 3 9 9 9 6 5
         # Using a more cautious, less principled value for now.....
-        return self.rhomb_contains_point(point) > 0.1859  # 0.271#0.19793839129906832
+        # BIG, NEWS, OBVIOUS IN HINDSIGHT: Thanks to brainstorming on Discord, I have realized that the value I'm using
+        #   should simply depend on level. Picture a really high-level chunk being subdivided repeatedly. First it
+        #   loses up to 14.2% around the edges (as far as our absolute certainty goes), as its sub-chunks are filled in.
+        #   Then, it loses up to 14.2% of a sub-chunk edge length (which is a factor of phi^3 smaller). Then it loses
+        #   14.2% of a sub-sub-chunk edge length. These repeated sums, for a level N chunk, give a territory loss of
+        #   c * phi^3 * (phi^(3N) - 1) / (phi^3 - 1). (Gain should be the same) This is still a simplified worst-case,
+        #   but it seems like it would be hard to come up with a better model. Perhaps I could experimentally measure
+        #   one more level for a better starting point.
+        #scale_formula = self.network.phipow(2) * (self.network.phipow(3 * self.level) - 1) / 2
+        scale_formula = self.network.phipow(2) * (self.network.phipow(3 * self.level) - 1) / (2*self.network.phipow(3 * self.level))
+        return self.rhomb_contains_point(point) > 0.141996 * scale_formula #0.1859  # 0.271#0.19793839129906832
 
     def might_contain_point(self, point, block_level=0):
         """
@@ -3075,7 +3085,8 @@ class Chunk:
         # For now, just using the same quick test as safely_contains_point.
         # TODO safely_contains and might_contain ought to be coupled, to prevent me changing the value in one place and
         #  forgetting the other (which I just now did).
-        return self.rhomb_contains_point(point) > -0.1859  # 0.271#-0.19793839129906832#-0.14199511391282338
+        scale_formula = self.network.phipow(2) * (self.network.phipow(3 * self.level) - 1) / (2*self.network.phipow(3 * self.level))
+        return self.rhomb_contains_point(point) > -0.141996 * scale_formula#-0.1859  # 0.271#-0.19793839129906832#-0.14199511391282338
 
     def chunk_at_location(self, target, target_level=0, generate=False, verbose=False):
         """
@@ -3371,12 +3382,13 @@ class Chunk:
         """A debugging-oriented search/generation algorithm, for when the chunk network is broken."""
         #TODO All these hypothetical blocks are getting drawn and assigned hitboxes, which makes it hard to tell what's
         # really happening. Properly delete them.
-        if self.rhomb_contains_point(target) >= 0:
-            if self.level <= 1:
-                print(str(self)+ " is sufficient.")
-                self.get_children()
-                return [self]
-        print(str(self)+" at level "+str(self.level)+ " is not sufficient.")
+        if self.level == 0 and self.rhomb_contains_point(target) >= 0:
+            print(str(self)+ " is a block containing the player! Perfect.")
+        if self.level == 1 and self.safely_contains_point(target):
+            print(str(self)+ " is level 1 and safely contains player, which should be sufficient.")
+            self.get_children()
+            return [self]
+        print(str(self)+" at level "+str(self.level)+ " is not immediately sufficient. Checking.")
         all_possible_children = self.network.generate_children(self.template_index, self.offset, self.level, True)
         possible_child_chunks = [Chunk(self.network, child[0], child[1], self.level - 1, True) for child in all_possible_children]
         def cleanup(possible_child_chunks = possible_child_chunks):
@@ -3392,21 +3404,27 @@ class Chunk:
                 if a_child.safely_contains_point(target):
                     cleanup()
                     return [a_child]
+            print ("Found player in outside hit, leaving for later.")
             # Hmm ok, it was an outside hit. May need upwards search; deal with this after.
         parent_stack = [self]
         while parent_stack[-1].parent is not None:
             parent_stack.append(parent_stack[-1].parent)
         parent_safely_contains_check = [c.safely_contains_point(target) for c in parent_stack]
         if not np.any(parent_safely_contains_check):
+            print("Highest parent does not safely contain target;")
+            print('player dist into parent: '+str(parent_stack[-1].rhomb_contains_point(target)))
+            scale_formula = self.network.phipow(2) * (self.network.phipow(3 * self.level) - 1) / (2*self.network.phipow(3 * self.level))
+            print(' range for safe containment: '+str(0.141996 * scale_formula))
             parent_stack.append(parent_stack[-1].get_parent())
             # We added a new chunk, so that counts as an increment.
             print("Added new parent.")
             cleanup()
             return [parent_stack[-1]]
-        if np.any(safely_contains_check):
             print("Outside hit; attempting to join main tree.")
             # Due to the earlier check, we can assume the hit is not properly our own child.
             # This time we know there's some shared ancestor between self and the child's proper parent.
+            # We know the shared ancestor is already instantiated, because the top of the tree safely_contains the
+            # target, which means it safely_contains the outside hit.
             hits = np.nonzero(safely_contains_check)[0]
             if len(hits) > 1:
                 print("Somehow got "+str(len(hits))+" children which safely contain target.")
@@ -3445,6 +3463,7 @@ class Chunk:
                     print("Found a chunk at level "+str(self.level - 1)+" which safely contained target.\n"
                           + "However, its proper parent at level "+str(possible_chunk.level)+" will not claim it.")
                     #TODO This is occurring. Print helpful data here.
+                    # This still is occurring after fixing safely_contains().  
                     print("Preparing debug info...")
                     for guess_info_pair in [(lowest_match, "Lowest matching ancestor:"), (possible_chunk.parent, "Hypothetical ancestor:")]:
                         guess = guess_info_pair[0]
@@ -3740,7 +3759,8 @@ class GoldenField(numpy.lib.mixins.NDArrayOperatorsMixin):
     def __init__(self, values):
         """Format is [a,b,c] representing (a + bφ)/(c+1).
         Note the one-off denominator; so 1 is [1,0,0]."""
-        values = np.array(values)
+        if type(values) is list:
+            values = np.array(values)
         if values.dtype in [self.golden64, self.golden32]:
             self.ndarray = values
         elif values.shape[-1] == 3 and values.dtype.kind in ['u', 'i']:
