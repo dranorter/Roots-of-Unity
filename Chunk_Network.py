@@ -3420,6 +3420,7 @@ class Chunk:
             print("Added new parent.")
             cleanup()
             return [parent_stack[-1]]
+        if np.any(safely_contains_check):
             print("Outside hit; attempting to join main tree.")
             # Due to the earlier check, we can assume the hit is not properly our own child.
             # This time we know there's some shared ancestor between self and the child's proper parent.
@@ -3463,7 +3464,8 @@ class Chunk:
                     print("Found a chunk at level "+str(self.level - 1)+" which safely contained target.\n"
                           + "However, its proper parent at level "+str(possible_chunk.level)+" will not claim it.")
                     #TODO This is occurring. Print helpful data here.
-                    # This still is occurring after fixing safely_contains().  
+                    # This still is occurring after fixing safely_contains(). Certainly this could be because the
+                    # "proper parent" was not checked for anything but its template number matching.
                     print("Preparing debug info...")
                     for guess_info_pair in [(lowest_match, "Lowest matching ancestor:"), (possible_chunk.parent, "Hypothetical ancestor:")]:
                         guess = guess_info_pair[0]
