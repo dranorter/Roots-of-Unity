@@ -29,6 +29,11 @@ far = 600.0
 enabled = true
 cast_to = Vector3( 0, 0, -2 )
 
+[node name="interact" type="RayCast" parent="CameraBody/Camera"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1.66893e-06, 0 )
+enabled = true
+cast_to = Vector3( 0, 0, -10 )
+
 [node name="Player" type="KinematicBody" parent="."]
 transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.082, 56.551, 0 )
 script = ExtResource( 2 )

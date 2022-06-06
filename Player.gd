@@ -11,6 +11,7 @@ var pos_history = []
 onready var camera = $"../CameraBody/Camera"
 onready var camera_body = $"../CameraBody"
 onready var camera_grab = $"../CameraBody/Camera/grab"
+onready var interact_ray = $"../CameraBody/Camera/interact"
 
 onready var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
 
@@ -36,6 +37,9 @@ func _process(delta):
 	if Input.get_mouse_mode() == Input.MOUSE_MODE_VISIBLE:
 		if Input.is_mouse_button_pressed(BUTTON_LEFT):
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	
+	var interactable = interact_ray.get_collider()
+	print(interactable)
 
 func _physics_process(delta):
 	var input_moved = false

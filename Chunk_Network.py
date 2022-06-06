@@ -2,6 +2,7 @@ import random
 
 from godot import exposed, export
 from godot.bindings import _File as File
+from godot import ArrayMesh
 from godot import *
 import random as r
 import numpy as np
@@ -2780,7 +2781,104 @@ class Chunk:
         #     faces (and three edges), since every neighbor of our chosen point is a rhombohedron, with three faces
         #     touching the point. If any neighbor of our chosen point is missing, we can tell because some other
         #     neighbor of our chosen point will share faces with less than three.
-        pass
+        #  3) At the moment, all chunk templates contain blocks (the os_blocks) which extent outside the chunk, and
+        #     even blocks which only touch the chunk at one point. This halo of extra blocks should theoretically touch
+        #     every diagonal neighbor. And if it doesn't, that would at least be interesting to know. So: the strategy
+        #     I have in mind would be to create a bunch of 'hypothetical children' like increment_search used to;
+        #     simply create new Chunk objects with their offsets given by the os_blocks. When trying to find a block's
+        #     diagonal neighbors, these chunks would be hypothetical sub-blocks. Next, we need to make sure each
+        #     hypothetical chunk is "safely inside" some parent of the current chunk tree, adding a new top-level chunk
+        #     if necessary. Then the hypothetical chunks will have direct parents which would fit on the tree. We just
+        #     have to instantiate hypothetical parents until we find a linking point. Finally, we can simply declare the
+        #     direct parents of our hypothetical children (well, their non-hypothetical counterparts) to be the proper
+        #     set of neighbors (ie, neighbors including diagonals). This set has the relevant property of covering all
+        #     blocks in the template. If it misses some occasional diagonals, I may need to re-generate my templates.
+
+        # Attempting to do suggestion #3.
+        # We can get all os_children, but mixed with is_children.
+        all_possible_children = self.network.generate_children(self.template_index, self.offset, self.level, True)
+        # We'll get rid of the is_children by comparing with our own.
+        # TODO We'd be better off not having to generate all our children here.
+        actual_child_chunks = self.get_children()
+        actual_child_templates = [child.template_index for child in actual_child_chunks]
+        actual_child_offsets = [child.offset for child in actual_child_chunks]
+        possible_os_children = []
+        for child in all_possible_children:
+            # TODO This looks slow, and not just because it's a for loop. Can we just compare offsets?
+            found_inside = False
+            template_matches = np.nonzero(np.array(actual_child_templates) == child[0])[0]
+            for match_i in template_matches:
+                if actual_child_offsets[match_i] == child[1]:
+                    found_inside = True
+                    break
+            if not found_inside:
+                possible_os_children.append(child)
+        # Now the list has just outside children.
+        possible_os_chunks = [Chunk(self.network, child[0], child[1], self.level - 1, True) for child in
+                                 possible_os_children]
+        # We'll have a lot of hypothetical chunks to clean up
+        def cleanup(possible_os_chunks=possible_os_chunks):
+            for chunk in possible_os_chunks:
+                del chunk
+            del possible_os_chunks
+
+        parent_stack = [self]
+        while parent_stack[-1].parent is not None:
+            parent_stack.append(parent_stack[-1].parent)
+
+        ### PASTED CODE, needs fixed
+        parent_safely_contains_check = [c.safely_contains_point(target) for c in parent_stack]
+        if not np.any(parent_safely_contains_check):
+            print("Highest parent does not safely contain target;")
+            print('player dist into parent: ' + str(parent_stack[-1].rhomb_contains_point(target)))
+            scale_formula = self.network.phipow(2) * (self.network.phipow(3 * self.level) - 1) / (
+                        2 * self.network.phipow(3 * self.level))
+            print(' range for safe containment: ' + str(0.141996 * scale_formula))
+            parent_stack.append(parent_stack[-1].get_parent())
+            # We added a new chunk, so that counts as an increment.
+            print("Added new parent.")
+
+        child_parent_stack = [possible_child]
+        united = False
+        # Because we're doing this with a merely possible child, we have to do it all in one go, not incrementally.
+        # This is unfortunate, since there will be a lot of hits like this.
+        parent_stack_templates = [p.template_index for p in parent_stack]
+        # TODO Maybe totally skip this if the current chunk doesn't even possibly contain the target.
+        matching_ancestor = None
+        while len(child_parent_stack) <= len(parent_stack) and not united:
+            child_parent_stack.append(child_parent_stack[-1].get_parent())
+            new_parent = child_parent_stack[-1]
+            if new_parent.template_index in parent_stack_templates:
+                possible_matches = [parent_stack[template_match] for template_match in
+                                    np.nonzero(np.array(parent_stack_templates) == new_parent.template_index)[0]]
+                for possible_match in possible_matches:
+                    if np.all(possible_match.offset == new_parent.offset):
+                        # We've got a match.
+                        united = True
+                        matching_ancestor = possible_match
+        if not united:
+            print("Found a chunk at level " + str(self.level - 1) + " which safely contained target.\n"
+                  + "However, failed to find a shared parent with existing hierarchy.")
+            cleanup()
+            return []
+        # We just need to locate the match in the existing hierarchy.
+        child_parent_stack.reverse()
+        child_parent_stack = child_parent_stack[:-1]
+        print("Found a solid hit; evaluating a parent stack:")
+        print(child_parent_stack)
+        lowest_match = matching_ancestor
+        match_count = 0
+        for possible_chunk in child_parent_stack:
+            sift_amongst = [chunk for chunk in lowest_match.get_children() if chunk is not None]
+            sifted_template = [c.template_index == possible_chunk.template_index for c in sift_amongst]
+            sifted_offset = [np.all(c.offset == possible_chunk.offset) for c in sift_amongst]
+            if not np.any(sifted_template) or not np.any(sifted_offset):
+                print("Unable to merge entire parent stack; returning lowest hit. Matched " + str(match_count) + ".")
+                cleanup()
+                cleanup(child_parent_stack)
+                return [lowest_match]
+            lowest_match = sift_amongst[np.nonzero(np.array(sifted_template) * np.array(sifted_offset))[0][0]]
+            match_count += 1
 
     def _diag_neighbors_complete(self):
         """
@@ -3381,7 +3479,6 @@ class Chunk:
 
     def increment_search(self, target):
         """A debugging-oriented search/generation algorithm, for when the chunk network is broken."""
-        #TODO careful sweep needed: does every hypothetical block get cleanup() called on it?
         if self.level == 0 and self.rhomb_contains_point(target) >= 0:
             print(str(self)+ " is a block containing the player! Perfect.")
             return [self]
@@ -3393,20 +3490,20 @@ class Chunk:
             self.get_children()
             return [self]
         print(str(self)+" at level "+str(self.level)+ " is not immediately sufficient. Checking.")
-        all_possible_children = self.network.generate_children(self.template_index, self.offset, self.level,False)# True)
-        possible_child_chunks = [Chunk(self.network, child[0], child[1], self.level - 1, True) for child in all_possible_children]
-        def cleanup(possible_child_chunks = possible_child_chunks):
-            for chunk in possible_child_chunks:
-                del chunk
-            del possible_child_chunks
-        safely_contains_check = [c.safely_contains_point(target) for c in possible_child_chunks]
-        might_contain_check = [c.might_contain_point(target) for c in possible_child_chunks]
+        actual_children = [chunk for chunk in self.get_children() if chunk is not None]
+        # all_possible_children = self.network.generate_children(self.template_index, self.offset, self.level,False)# True)
+        # possible_child_chunks = [Chunk(self.network, child[0], child[1], self.level - 1, True) for child in all_possible_children]
+        # def cleanup(possible_child_chunks = possible_child_chunks):
+        #     for chunk in possible_child_chunks:
+        #         del chunk
+        #     del possible_child_chunks
+        safely_contains_check = [c.safely_contains_point(target) for c in actual_children]#possible_child_chunks]
+        might_contain_check = [c.might_contain_point(target) for c in actual_children]#possible_child_chunks]
         if np.any(safely_contains_check):
             # We have the safely_contains guarantee, and need no upwards search.
-            actual_children = [chunk for chunk in self.get_children() if chunk is not None]
             for a_child in actual_children:
                 if a_child.safely_contains_point(target):
-                    cleanup()
+                    #cleanup()
                     return [a_child]
             print ("Found player in outside hit, leaving for later.")
             # Hmm ok, it was an outside hit. May need upwards search; deal with this after.
@@ -3422,78 +3519,77 @@ class Chunk:
             parent_stack.append(parent_stack[-1].get_parent())
             # We added a new chunk, so that counts as an increment.
             print("Added new parent.")
-            cleanup()
+            #cleanup()
             return [parent_stack[-1]]
-        #TODO Does checking for outside hits make things any faster?
-        if np.any(safely_contains_check):
-            print("Outside hit; attempting to join main tree.")
-            # Due to the earlier check, we can assume the hit is not properly our own child.
-            # This time we know there's some shared ancestor between self and the child's proper parent.
-            # We know the shared ancestor is already instantiated, because the top of the tree safely_contains the
-            # target, which means it safely_contains the outside hit.
-            hits = np.nonzero(safely_contains_check)[0]
-            if len(hits) > 1:
-                print("Somehow got "+str(len(hits))+" children which safely contain target.")
-            possible_child = possible_child_chunks[hits[0]]
-            child_parent_stack = [possible_child]
-            united = False
-            # Because we're doing this with a merely possible child, we have to do it all in one go, not incrementally.
-            # This is unfortunate, since there will be a lot of hits like this.
-            parent_stack_templates = [p.template_index for p in parent_stack]
-            # TODO Maybe totally skip this if the current chunk doesn't even possibly contain the target.
-            matching_ancestor = None
-            while len(child_parent_stack) <= len(parent_stack) and not united:
-                child_parent_stack.append(child_parent_stack[-1].get_parent())
-                new_parent = child_parent_stack[-1]
-                if new_parent.template_index in parent_stack_templates:
-                    possible_matches = [parent_stack[template_match] for template_match in np.nonzero(np.array(parent_stack_templates) == new_parent.template_index)[0]]
-                    for possible_match in possible_matches:
-                        if np.all(possible_match.offset == new_parent.offset):
-                            # We've got a match.
-                            united = True
-                            matching_ancestor = possible_match
-            if not united:
-                print("Found a chunk at level "+str(self.level - 1)+" which safely contained target.\n"
-                      + "However, failed to find a shared parent with existing hierarchy.")
-                cleanup()
-                return []
-            # We just need to locate the match in the existing hierarchy.
-            child_parent_stack.reverse()
-            child_parent_stack = child_parent_stack[:-1]
-            print("Found a solid hit; evaluating a parent stack:")
-            print(child_parent_stack)
-            lowest_match = matching_ancestor
-            match_count = 0
-            for possible_chunk in child_parent_stack:
-                sift_amongst = [chunk for chunk in lowest_match.get_children() if chunk is not None]
-                sifted_template = [c.template_index == possible_chunk.template_index for c in sift_amongst]
-                sifted_offset = [np.all(c.offset == possible_chunk.offset) for c in sift_amongst]
-                if not np.any(sifted_template) or not np.any(sifted_offset):
-                    print("Unable to merge entire parent stack; returning lowest hit. Matched "+str(match_count)+".")
-                    cleanup()
-                    cleanup(child_parent_stack)
-                    return [lowest_match]
-                lowest_match = sift_amongst[np.nonzero(np.array(sifted_template)*np.array(sifted_offset))[0][0]]
-                match_count += 1
-            print("Entire parent stack recreated. Returning the outside hit.")
-            cleanup()
-            cleanup(child_parent_stack)
-            return [lowest_match]
+        # if np.any(safely_contains_check):
+        #     print("Outside hit; attempting to join main tree.")
+        #     # Due to the earlier check, we can assume the hit is not properly our own child.
+        #     # This time we know there's some shared ancestor between self and the child's proper parent.
+        #     # We know the shared ancestor is already instantiated, because the top of the tree safely_contains the
+        #     # target, which means it safely_contains the outside hit.
+        #     hits = np.nonzero(safely_contains_check)[0]
+        #     if len(hits) > 1:
+        #         print("Somehow got "+str(len(hits))+" children which safely contain target.")
+        #     possible_child = possible_child_chunks[hits[0]]
+        #     child_parent_stack = [possible_child]
+        #     united = False
+        #     # Because we're doing this with a merely possible child, we have to do it all in one go, not incrementally.
+        #     # This is unfortunate, since there will be a lot of hits like this.
+        #     parent_stack_templates = [p.template_index for p in parent_stack]
+        #     # TODO Maybe totally skip this if the current chunk doesn't even possibly contain the target.
+        #     matching_ancestor = None
+        #     while len(child_parent_stack) <= len(parent_stack) and not united:
+        #         child_parent_stack.append(child_parent_stack[-1].get_parent())
+        #         new_parent = child_parent_stack[-1]
+        #         if new_parent.template_index in parent_stack_templates:
+        #             possible_matches = [parent_stack[template_match] for template_match in np.nonzero(np.array(parent_stack_templates) == new_parent.template_index)[0]]
+        #             for possible_match in possible_matches:
+        #                 if np.all(possible_match.offset == new_parent.offset):
+        #                     # We've got a match.
+        #                     united = True
+        #                     matching_ancestor = possible_match
+        #     if not united:
+        #         print("Found a chunk at level "+str(self.level - 1)+" which safely contained target.\n"
+        #               + "However, failed to find a shared parent with existing hierarchy.")
+        #         cleanup()
+        #         return []
+        #     # We just need to locate the match in the existing hierarchy.
+        #     child_parent_stack.reverse()
+        #     child_parent_stack = child_parent_stack[:-1]
+        #     print("Found a solid hit; evaluating a parent stack:")
+        #     print(child_parent_stack)
+        #     lowest_match = matching_ancestor
+        #     match_count = 0
+        #     for possible_chunk in child_parent_stack:
+        #         sift_amongst = [chunk for chunk in lowest_match.get_children() if chunk is not None]
+        #         sifted_template = [c.template_index == possible_chunk.template_index for c in sift_amongst]
+        #         sifted_offset = [np.all(c.offset == possible_chunk.offset) for c in sift_amongst]
+        #         if not np.any(sifted_template) or not np.any(sifted_offset):
+        #             print("Unable to merge entire parent stack; returning lowest hit. Matched "+str(match_count)+".")
+        #             cleanup()
+        #             cleanup(child_parent_stack)
+        #             return [lowest_match]
+        #         lowest_match = sift_amongst[np.nonzero(np.array(sifted_template)*np.array(sifted_offset))[0][0]]
+        #         match_count += 1
+        #     print("Entire parent stack recreated. Returning the outside hit.")
+        #     cleanup()
+        #     cleanup(child_parent_stack)
+        #     return [lowest_match]
         # The best we can do is return all children which might contain the target.
         if not np.any(might_contain_check):
             print("This chunk is far from the target; backing up.")
-            cleanup()
+            # cleanup()
             return [parent_stack[-1]]
         if self.level <= 1:
             # A level 1 might-contain could be the best we can get, but it could also mean we need to back up, so,
             # unfortunately we can't just return self.
-            cleanup()
+            # cleanup()
             return [self.parent]
         # It's ok to ignore outside hits now, since there's a safely containing parent. There might still be oddities,
         # but we don't have a safely_contains hit to use to dig into details.
-        might_contains = [c for c in self.get_children() if c is not None and c.might_contain_point(target)]
+        might_contains = [c for c in actual_children if c is not None and c.might_contain_point(target)]
         print("Returning "+str(len(might_contains))+" might-contains of level "+str(self.level-1))
-        cleanup()
+        # cleanup()
         return might_contains
 
 
