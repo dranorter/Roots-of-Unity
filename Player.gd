@@ -13,6 +13,8 @@ onready var camera_body = $"../CameraBody"
 onready var camera_grab = $"../CameraBody/Camera/grab"
 onready var interact_ray = $"../CameraBody/Camera/interact"
 
+onready var chunk_network = $"../ChunkLoad/Chunk_Network"
+
 onready var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
 
 
@@ -39,7 +41,12 @@ func _process(delta):
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	
 	var interactable = interact_ray.get_collider()
-	print(interactable)
+	#interact_ray.get_collision_point()
+	#interact_ray.get_collision_normal()
+	if interactable:
+		if interactable.get_parent().get_meta("originating_chunk"):
+			chunk_network.point_at_block(interactable.get_parent(), interact_ray)
+		
 
 func _physics_process(delta):
 	var input_moved = false
