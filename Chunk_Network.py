@@ -346,10 +346,10 @@ class Chunk_Network(MeshInstance):
 		self.all_chosen_centers = eval(str(fs.get_line()))
 		self.blocklist = np.array(eval(str(fs.get_line())))
 		fs.close()
-		inside_blocks_bools = np.load(filename + "_is.npy")
-		outside_blocks_bools = np.load(filename + "_os.npy")
-		for i in range(inside_blocks_bools.shape[0]):
-			self.all_blocks.append((self.blocklist[inside_blocks_bools[i]], self.blocklist[outside_blocks_bools[i]]))
+		self.inside_blocks_bools = np.load(filename + "_is.npy")
+		self.outside_blocks_bools = np.load(filename + "_os.npy")
+		for i in range(self.inside_blocks_bools.shape[0]):
+			self.all_blocks.append((self.blocklist[self.inside_blocks_bools[i]], self.blocklist[self.outside_blocks_bools[i]]))
 
 	def load_templates_repr(self):
 		starttime = time.perf_counter()
@@ -760,6 +760,8 @@ class Chunk_Network(MeshInstance):
 		"""
 		highest_level = self.highest_chunk.level
 		seed = self.highest_chunk.seed
+		# Have to subtract 1 from highest_level because... standard stored offsets are always 1 level lower than the
+		# Chunk object that stores them.
 		offset = self.highest_chunk.get_offset(highest_level-1)
 		# print("Converting from "+str(highest_level)+" to "+str(level)+".")
 		# print("Seed at highest level: ")
@@ -933,24 +935,24 @@ class Chunk_Network(MeshInstance):
 		# could be done correctly if I had the golden_field class working... is there a makeshift solution that would
 		# get some of the benefits?
 
-		approx_coefficients = np.array(np.round((self.worldplane / np.linalg.norm(self.worldplane[0])).dot(lowered_offset)
-												/ np.linalg.norm(self.worldplane[0])),dtype='int64')
-		worldplane_12d = np.array(
-			[[0,0,1,0,0,-1,
-			  1,0,0,1,0,0],
-			 [1,0,0,-1,0,0,
-			  0,1,0,0,1,0],
-			 [0,1,0,0,-1,0,
-			  0,0,1,0,0,1]],dtype='int64')
-		approx_gf = approx_coefficients.dot(worldplane_12d)
+		# approx_coefficients = np.array(np.round((self.worldplane / np.linalg.norm(self.worldplane[0])).dot(lowered_offset)
+		# 										/ np.linalg.norm(self.worldplane[0])),dtype='int64')
+		# worldplane_12d = np.array(
+		# 	[[0,0,1,0,0,-1,
+		# 	  1,0,0,1,0,0],
+		# 	 [1,0,0,-1,0,0,
+		# 	  0,1,0,0,1,0],
+		# 	 [0,1,0,0,-1,0,
+		# 	  0,0,1,0,0,1]],dtype='int64')
+		# approx_gf = approx_coefficients.dot(worldplane_12d)
 		# Oh... because of the way the worldplane is set up, each entry will just be a sum of one integer field and one phi field.
 		# IE, the only benefit I'm getting here is I can do the purely integer arithmetic before I do the floating point part.
 		# Accuracy is lost, in each dimension, proportional to the inaccuracy in each large multiple of phi.
-		safer_lowered_offset = lowered_offset - approx_gf[:6]
-		safer_lowered_offset = safer_lowered_offset - self.phi*approx_gf[6:]
+		# safer_lowered_offset = lowered_offset - approx_gf[:6]
+		# safer_lowered_offset = safer_lowered_offset - self.phi*approx_gf[6:]
 		# Note: This seems to be the first weak point, currently. When offset coordinates are more than 17 digits long,
 		# converting them to float at all creates problems. (These problems somehow *don't* lead to a crash.)
-		print(safer_lowered_offset)
+		# print(safer_lowered_offset)
 
 		# To reduce floating point error, we separately dot "seed" and "lowered_offset" with squarallel, then subtract.
 		# But, "seed" doesn't actually need projected, it's already been.
@@ -959,24 +961,28 @@ class Chunk_Network(MeshInstance):
 		# giving an extremely number -- which protects us from floating point error when we scale up (via multiplying
 		# by powers of phi).
 		# (Encountered pretty big floating point errors around 1e-9, or, level-13 chunks.)
-		safer_seed = self.get_seed() - safer_lowered_offset.dot(self.squarallel)
+		# (Update: since introducing get_seed(), floating point errors become *visible* around 1e-9, IE, the printed
+		# numbers differ by their least significant digit. "safer-seed" fails to become smaller after that, staying
+		# about 1e-9 even at higher levels. But safer-seed isn't actually used, and things remain reasonable until
+		# level 17. Even after level 17, the seed becomes unreasonable but nothing crashes.
+		# safer_seed = self.get_seed() - safer_lowered_offset.dot(self.squarallel)
 		# chunk_axes_inv_seed = chunk_axes_inv.dot(safer_seed)
 		# Can we get less floating point problems by just multiplying by a power of phi?
-		chunk_axes_inv_seed_2 = level_sign * safer_seed * self.phipow(3 * level)
+		# chunk_axes_inv_seed_2 = level_sign * safer_seed * self.phipow(3 * level)
 		# The two are added together due to a hidden -1 multiplication as offset gets raised an extra level
-		chunk_axes_inv_seed_3 = level_sign * self.phipow(3 * level) * self.get_seed() + self.phipow(3) * np.array(offset,
-																										  dtype='int64')  # .dot(self.squarallel)
+		# chunk_axes_inv_seed_3 = level_sign * self.phipow(3 * level) * self.get_seed() + self.phipow(3) * np.array(offset,
+		# 																								  dtype='int64')  # .dot(self.squarallel)
 		chunk_axes_inv_seed = self.get_seed(level+1) + self.phipow(3)*np.array(offset,dtype='int64').dot(self.squarallel)
 
 		print("Calculating seed from safe point " + str(lowered_offset))
 		print(str(lowered_offset.dot(self.squarallel)))
 		#print(str(-level_sign * np.array(offset, dtype=int).dot(self.squarallel) * self.phipow(-3 * (level - 1))))
-		print("Translated seed (should be < " + "{:.1e}".format(math.pow(1 / 4.7, level)) + "):" + str(safer_seed))
+		# print("Translated seed (should be < " + "{:.1e}".format(math.pow(1 / 4.7, level)) + "):" + str(safer_seed))
 		# print("Translated Seed: " + str(
 		# 	self.get_seed( + level_sign * np.array(offset, dtype=int).dot(self.squarallel) * self.phipow(-3 * (level - 1))))
 		print("Rescaled seed: " + str(chunk_axes_inv_seed))
-		print("Rescaled safer seed: " + str(chunk_axes_inv_seed_2))
-		print("Rescaled seed: " + str(chunk_axes_inv_seed_3))
+		# print("Rescaled safer seed: " + str(chunk_axes_inv_seed_2))
+		# print("Rescaled seed: " + str(chunk_axes_inv_seed_3))
 		print("Current seed:")
 		print(self.get_seed())
 		print("Original seed:")
@@ -1038,7 +1044,59 @@ class Chunk_Network(MeshInstance):
 		print("Rescaled chunk center: " + str(chunk_as_block_center))
 		print("Rescaled chunk origin: " + str(np.linalg.inv(self.deflation_face_axes).dot(offset)))
 
-		# TODO Low priority, but: should the below be rewritten to use the constraint tree?
+		# By using the constraint lookup tree, we can make parent generation much faster: 20 parents generate in 0.28
+		# seconds rather than 19.8 seconds.
+
+		# We can iterate over all possible blocks instead of all possible templates.
+		all_is_blocks = np.array(self.is_blocklist)
+		# all_aligned_blocks = all_is_blocks[np.nonzero(np.all(all_is_blocks - chunk_as_block_center
+		# 														 - np.round(all_is_blocks - chunk_as_block_center) == 0,
+		# 														 axis=1))[0]]
+		block_shape_index = self.possible_centers.index(self.all_chosen_centers[template_index])
+		aligned_blocks_is_indices = self.is_blocklist_alignment_lookup[block_shape_index]
+		aligned_blocks_bool_indices = self.is_to_all_bool_lookup[aligned_blocks_is_indices]
+		all_aligned_blocks = all_is_blocks[aligned_blocks_is_indices]
+		# TODO I was trying to speed things up by using self.inside_blocks_bools as a look up table, but getting the
+		#  indices for it was slow enough to be detrimental overall. Used to get 20 of these in .28 seconds somehow,
+		#  now I've whittled it down from .58 to .43, but can't seem to find the lost .15 seconds. (... commenting out
+		#  some other stuff, I'm now at 0.18 seconds total, but I swear I was at 0.23 seconds even *with* that other
+		#  stuff, just a few hours ago...)
+		# aligned_blocks_bool_indices = np.nonzero(np.all(np.repeat([self.blocklist],len(all_aligned_blocks),axis=0)
+		# 												- np.repeat([all_aligned_blocks],len(self.blocklist),axis=1)
+		# 												.reshape((len(all_aligned_blocks),len(self.blocklist),6)) == 0, axis=2))[1]
+		all_block_offsets = np.floor(all_aligned_blocks)
+		all_proposed_origins = -all_block_offsets
+		all_translated_seeds = chunk_axes_inv_seed - all_proposed_origins.dot(self.squarallel)
+		all_inside_hits = []
+		for i in range(len(all_translated_seeds)):
+			# find_satisfied assumes we send it valid seeds, so we need to catch errors.
+			hits = np.array([],dtype='int')
+			try:
+				hits = np.array(self.find_satisfied(all_translated_seeds[i]),dtype=int)
+			except Exception:
+				pass
+			real = self.inside_blocks_bools[hits,aligned_blocks_bool_indices[i]]
+			real_hits = hits[real]
+			#for hit in hits[self.inside_blocks_bools[hits,aligned_blocks_bool_indices[i]]]:
+			if np.any(real):
+					hit = real_hits[0]
+				# Check if aligned block which generated the seed is actually present in this template.
+				#if self.inside_blocks_bools[hit,aligned_blocks_bool_indices[i]]:
+				#if np.any(np.all(np.array(self.all_blocks[hit][0]) - all_aligned_blocks[i] == 0,axis=1)):
+					all_inside_hits.append((hit, all_proposed_origins[i] + chunk_as_block_origin,
+									chunk_axes_inv_seed - all_proposed_origins[i].dot(self.squarallel)))
+					print("Seed magnitude: "+str(np.linalg.norm(chunk_axes_inv_seed)))
+					print("New seed mag: "+str(np.linalg.norm(all_inside_hits[-1][2])))
+					# TODO Should skip the "return" during testing to ensure only 1 hit happens.
+					return all_inside_hits
+		if len(all_inside_hits) == 1:
+			return all_inside_hits
+		if len(all_inside_hits) > 0:
+			print("find_satisfied method found "+str(len(all_inside_hits))+" hits.")
+			for hit in all_inside_hits:
+				print(hit)
+			return [all_inside_hits[0]]
+		print("find_satisfied method found no hits.")
 		closest_non_hit = None
 		inside_hits = []
 		outside_hits = []
@@ -1052,7 +1110,10 @@ class Chunk_Network(MeshInstance):
 			if len(list(aligned_blocks)) == 0:
 				continue
 			# block_offsets measures from template origin to the canonical corner of each block
-			block_offsets = aligned_blocks - chunk_as_block_center + chunk_as_block_origin
+			# (since the aligned blocks are all... aligned, we are basically subtracting the rescaled chosen_center
+			# value, which is the fractional part of these blocks' coordinates. But we could've equivalently just
+			# rounded down.)
+			block_offsets = aligned_blocks - (chunk_as_block_center - chunk_as_block_origin)
 			# We find proposed placement of the template by subtracting these.
 			proposed_origins = -block_offsets
 			# proposed_origins are relative to where the seed's been *translated*, ie,
@@ -1060,10 +1121,23 @@ class Chunk_Network(MeshInstance):
 			# translated_seeds = (chunk_axes_inv_seed - proposed_origins).dot(self.normallel.T)
 			# TODO Maybe chunk_axes_inv_seed.dot(self.normallel.T) could be calculated more directly.
 			translated_seeds = chunk_axes_inv_seed.dot(self.normallel.T) - proposed_origins.dot(self.normallel.T)
-			# Note, these tests used to be strict, but I added an epsilor
+			test_seeds = chunk_axes_inv_seed.dot(self.squarallel) - proposed_origins.dot(self.squarallel)
+			# Note, these tests used to be strict, but I added an epsilon
 			a_hit = np.all([np.all(self.twoface_normals.dot(translated_seeds.T).T - constraint[:, 0] >= -1e-14, axis=1),
 							np.all(self.twoface_normals.dot(translated_seeds.T).T - constraint[:, 1] <= 1e-14, axis=1)],
 						   axis=0)
+			test_hits = []
+			for seed_i in range(len(test_seeds)):
+				try:
+					fs = self.find_satisfied(test_seeds[seed_i])
+					for hit in fs:
+						if np.any(np.all(np.array(self.all_blocks[hit][0]) - aligned_blocks[seed_i] == 0, axis=1)):
+							if hit == i:
+								test_hits.append(hit)
+				except Exception:
+					pass
+			if len(test_hits) > 0:
+				print(str(i)+": "+str(test_hits))
 			if np.any(a_hit):
 				print("We're inside template #" + str(i) + ", at offset" + str(
 					block_offsets[np.array(np.nonzero(a_hit))[0, 0]]))
@@ -1071,6 +1145,7 @@ class Chunk_Network(MeshInstance):
 								chunk_axes_inv_seed - proposed_origins[j].dot(self.squarallel)) for j in np.nonzero(a_hit)[0]]
 				break
 		# Checking outside blocks takes a lot longer, we only want to  do it if we need to
+		# At this point, outside hits are a failure condition and virtually always produce errors later on.
 		if len(inside_hits) == 0:
 			print("No inside hits; checking outside")
 			for i in range(len(self.all_blocks)):
@@ -1148,10 +1223,7 @@ class Chunk_Network(MeshInstance):
 		suitable for self.all_blocks etc, and a location in coordinates of the
 		same level as the children.
 		"""
-		print("Current seed:")
-		print(self.get_seed())
-		print("Original seed:")
-		print(self.original_seed)
+
 		# Move seed to our offset, then scale it
 		absolute_offset = np.linalg.matrix_power(self.deflation_face_axes, level - 1).dot(offset)
 		translated_seed = (self.get_seed() - absolute_offset).dot(self.squarallel)
@@ -1201,6 +1273,10 @@ class Chunk_Network(MeshInstance):
 			location = chunkscaled_positions[u_i] + chunkscaled_offset
 			for template_index in found_satisfied[u_i]:
 				template_center = self.chunk_center_lookup(template_index)
+				# What is the below line doing? We're accepting templates when any axis where template_center has a
+				# fractional part, the child's center is integer; and any axis where the child center has a fractional
+				# part, the template center is integer. Would've expected a check that they're the same. Maybe this
+				# works because the coordinates are expressed on adjacent, but nonequal, levels.
 				if np.all((template_center + chunks[chunk_i]) - np.round(template_center + chunks[chunk_i]) != 0):
 					children.append((template_index, location))
 		return children
@@ -1235,7 +1311,15 @@ class Chunk_Network(MeshInstance):
 			# If there's just one, the point must be inside it for two reasons.
 			# One, all the bounding constraints got checked. Two, any seed
 			# must be in at least one region.
-			return hits
+			# Update: Nope, this doesn't seem to be true. When generating parents, most of the translated seeds
+			# generated don't have any valid hits (and in fact, out of hundreds of seeds, only one should have a hit).
+			# Many of those seeds turn out to generate single false hits, which shouldn't get returned.
+			# return hits.
+			# TODO It seems like I don't understand this phenomenon well. Which sorts of seeds are so invalid that they
+			#  generate no hits? Maybe this corresponds to 6D grid points too far from the worldplane to be a chunk. In
+			#  that case, what is it about the generate_parents seed translation process that guarantees only one will
+			#  be close enough? Besides the underlying fact that there's only one valid parent, that is.
+			pass
 		real_hits = []
 		for hit in hits:
 			if self.satisfies(seedvalue, self.all_constraints[hit]):
@@ -1645,6 +1729,8 @@ class Chunk_Network(MeshInstance):
 		print(time.perf_counter() - starttime)
 		print("Loading...")
 
+		self.inside_blocks_bools = np.array([])
+		self.outside_blocks_bools = np.array([])
 		self.load_templates_npy("templates_test_vector_123")
 		print("Done loading " + str(len(self.all_constraints)) + " templates")
 		print(time.perf_counter() - starttime)
@@ -1830,6 +1916,26 @@ class Chunk_Network(MeshInstance):
 										)
 			print("Removed dupes in templates.")
 			print(time.perf_counter() - starttime)
+
+		# self.blocklist contains *all* blocks. Let's make a similar list for inside blocks.
+		is_blocks_bool = np.any(self.inside_blocks_bools,axis=0)
+		self.is_blocklist = self.blocklist[np.nonzero(is_blocks_bool)[0]]
+		self.is_to_all_bool_lookup = np.nonzero(is_blocks_bool)[0]
+		# Some stuff to help speed up generate_parents()
+		block_alignments = np.round(2*np.linalg.inv(self.deflation_face_axes).dot(np.array(self.possible_centers_live).T).T)/2
+		print(block_alignments)
+		is_blocklist_alignment_lookup = np.nonzero(np.all(np.modf(np.repeat([self.is_blocklist],len(block_alignments)
+																				 ,axis=0)
+															   - np.repeat([block_alignments],len(self.is_blocklist)
+																		   ,axis=1)
+															   .reshape(len(block_alignments),len(self.is_blocklist),6)
+																	   )[0] == 0, axis=2))
+		self.is_blocklist_alignment_lookup = [
+			[is_blocklist_alignment_lookup[1][i] for i in
+			 range(is_blocklist_alignment_lookup[1].shape[0]) if is_blocklist_alignment_lookup[0][i] == alignment]
+			for alignment in range(20)]
+
+
 		# Now that constraints have considerably less points, we probably need considerably less of them.
 		# TODO Make re-simplifying and redoing the constraint tree easier.
 		#self.test_templates()#(True)
@@ -1845,9 +1951,6 @@ class Chunk_Network(MeshInstance):
 		#print("Going to save")
 		#self.save_templates_npy("templates_test_vector_123")
 
-		# TODO Could still try optimizing generation by pre-generating higher-level chunks --
-		#  e.g. making templates for supersuperchunks. But at this point it feels like that
-		#  would be premature optimization.
 
 		# Now with somewhat more compact constraints, we can create a decent-speed
 		# lookup tree.
@@ -2089,8 +2192,10 @@ class Chunk_Network(MeshInstance):
 		# Add block highlighter as child
 		self.add_child(self.block_highlight, "BlockHighlight")
 
-		for i in range(100):
-			highest_chunk = self.highest_chunk.get_parent()
+		# test_2 = time.perf_counter()
+		# for i in range(7):
+		# 	self.highest_chunk = self.highest_chunk.get_parent()
+		# print(time.perf_counter() - test_2)
 
 	# if len(children) > 0:
 	# 	st.generate_normals()
@@ -3045,7 +3150,7 @@ class Chunk:
 			# We want to step from large to small.
 			child_parent_stacks[stack_i].reverse()
 			# We don't need the largest hypothetical parent since we already stored its match.
-			child_parent_stacks[stack_i] = child_parent_stacks[stack_i][1:]
+			#child_parent_stacks[stack_i] = child_parent_stacks[stack_i][1:]
 
 		# for possible_child in hypothetical_neighbors:
 		# 	child_parent_stack = [possible_child]
@@ -3075,15 +3180,25 @@ class Chunk:
 		lowest_matches = [chunk for chunk in matching_ancestors]
 		match_counts = [0]*len(lowest_matches)
 		print("Evaluating all neighbor parent stacks.")
-		for i in range(max([len(stack) for stack in child_parent_stacks])):
+		# We start at 1, since we don't need the largest hypothetical parent -- we already stored its match.
+		for i in range(1,max([len(stack) for stack in child_parent_stacks])):
 			# We'll ignore stacks that are over with already, but include them for ease of indexing.
-			hypotheticals_to_find = [stack[min(i,len(stack)-1)] for stack in child_parent_stacks]
+			# print("Stack is about to complain about index.")
+			# print("i: "+str(i))
+			# print("len(stack): "+str([len(stack) for stack in child_parent_stacks]))
+			# print("min: "+str([min(i,max(len(stack)-1,0)) for stack in child_parent_stacks]))
+			hypotheticals_to_find = [stack[min(i,max(len(stack)-1,0))] for stack in child_parent_stacks]
 			real_chunks_to_search = lowest_matches
 			#TODO This loop is repeating effort whenever some chunk and its child appear multiple times.
 			for j in range(len(child_parent_stacks)):
 				if len(child_parent_stacks[j]) > i:
 					possible_chunk = hypotheticals_to_find[j]
 					lowest_match = real_chunks_to_search[j]
+					#TODO Sometimes lowest_match is None??
+					if lowest_match is None:
+						print("Unable to merge entire parent stack while finding neighbors. Matched " + str(
+							match_counts[j]) + ".")
+						continue
 					sift_amongst = [chunk for chunk in lowest_match.get_children() if chunk is not None]
 					sifted_template = [c.template_index == possible_chunk.template_index for c in sift_amongst]
 					sifted_offset = [np.all(c.offset == possible_chunk.offset) for c in sift_amongst]
@@ -3094,12 +3209,12 @@ class Chunk:
 					lowest_matches[j] = sift_amongst[np.nonzero(np.array(sifted_template) * np.array(sifted_offset))[0][0]]
 					match_counts[j] += 1
 		for neighbor_i in range(len(match_counts)):
-			if match_counts[neighbor_i] == len(child_parent_stacks[i]):
-				if lowest_matches[i] not in self.diag_neighbors:
-					self.diag_neighbors.append(lowest_matches[i])
+			if match_counts[neighbor_i] == len(child_parent_stacks[neighbor_i]):
+				if lowest_matches[neighbor_i] not in self.diag_neighbors:
+					self.diag_neighbors.append(lowest_matches[neighbor_i])
 		self.diag_neighbors_found = True
 
-		if len(self.diag_neighbors) is 0:
+		if len(self.diag_neighbors) == 0:
 			print("Something went wrong finding neighbors... got none??")
 			print(match_counts)
 			print([len(stack) for stack in child_parent_stacks])
