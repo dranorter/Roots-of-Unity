@@ -115,6 +115,7 @@ class Chunk_Network(MeshInstance):
 	player_pos = np.zeros((3,))
 	player_guess = None
 	block_highlight = ImmediateGeometry.new()
+	block_highlight.set_material_override(COLOR)
 
 	def phipow(self, n):
 		if n >= 0:
@@ -3056,27 +3057,31 @@ class Chunk:
 					self.diag_neighbors.append(neighbor)
 		# We can get all os_children, but mixed with is_children.
 		all_possible_children = self.network.generate_children(self.template_index, self.offset, self.level, True)
-		# We'll get rid of the is_children by comparing with our own.
-		# TODO We'd be better off not having to generate all our children here.
-		actual_child_chunks = [chunk for chunk in self.get_children() if chunk is not None]
-		actual_child_templates = [child.template_index for child in actual_child_chunks]
-		actual_child_offsets = [child.offset for child in actual_child_chunks]
+		all_is_children = self.network.generate_children(self.template_index, self.offset, self.level, False)
+		# We'll get rid of the is_children by comparing with our own, and also, remove any that
+		# correspond to children of already-known neighbors.
+		all_known_children = all_is_children
+		for neighbor in self.diag_neighbors:
+			if neighbor is not None:
+				# There's no reason to worry about calling neighbor.get_children() because we're not actually worried
+				# about the children, just the neighbor.
+				all_known_children = all_known_children + self.network.generate_children(neighbor.template_index, neighbor.offset, neighbor.level)
+		actual_child_templates = [child[0] for child in all_known_children]
+		actual_child_offsets = [child[1] for child in all_known_children]
 		possible_os_children = []
 		for child in all_possible_children:
-			# TODO This looks slow, and not just because it's a for loop. Can we just compare offsets?
 			found_inside = False
 			template_matches = np.nonzero(np.array(actual_child_templates) == child[0])[0]
 			for match_i in template_matches:
-				if actual_child_offsets[match_i] == child[1]:
+				if np.all(actual_child_offsets[match_i] == child[1]):
 					found_inside = True
 					break
 			if not found_inside:
 				possible_os_children.append(child)
-		# Now the list has just outside children.
+		# Now the list has just children outside known neighbors (and outside self).
 		possible_os_chunks = [Chunk(self.network, child[0], child[1], self.level - 1, True) for child in
 								 possible_os_children]
 		# We'll have a lot of hypothetical chunks to clean up
-		# TODO This almost surely doesn't clean up the meshes and collision polygons. Need something like a Chunk.cleanup() function.
 		def cleanup(possible_os_chunks=possible_os_chunks):
 			for chunk in possible_os_chunks:
 				del chunk
@@ -3086,21 +3091,25 @@ class Chunk:
 		# 'diagonal neighbors'.
 		hypothetical_neighbors = [chunk.get_parent() for chunk in possible_os_chunks]
 		hypothetical_neighbors_unique = []
-		hypothetical_neighbors_unique_centers = []
-		# Need to filter out the inevitable duplicates, and also, remove any that correspond to already-known neighbors.
-		known_neighbor_centers = [str(chunk.get_center_position()) for chunk in self.diag_neighbors if chunk is not None]
+		hypothetical_neighbors_unique_strings = []
+		# Need to filter out the inevitable duplicates
 		for chunk in hypothetical_neighbors:
-			if str(chunk.get_center_position()) not in hypothetical_neighbors_unique_centers:
-				if str(chunk.get_center_position()) not in known_neighbor_centers:
-					hypothetical_neighbors_unique_centers.append(str(chunk.get_center_position()))
-					hypothetical_neighbors_unique.append(chunk)
+			chunk_string = str((chunk.template_index, chunk.offset))
+			if chunk_string not in hypothetical_neighbors_unique_strings:
+				hypothetical_neighbors_unique_strings.append(chunk_string)
+				hypothetical_neighbors_unique.append(chunk)
 		to_cleanup = []
 		for i in range(len(hypothetical_neighbors)):
 			if hypothetical_neighbors[i] not in hypothetical_neighbors_unique:
 				to_cleanup.append(hypothetical_neighbors[i])
+		print("Cleaning up "+str(len(to_cleanup))+" duplicate neighbors.")
 		cleanup(to_cleanup)
 		del hypothetical_neighbors
 		hypothetical_neighbors = hypothetical_neighbors_unique
+		print(str(len(hypothetical_neighbors))+" remain.")
+		if len(hypothetical_neighbors) == 0:
+			self.diag_neighbors_found = True
+			return(self.diag_neighbors)
 
 		parent_stack = [self]
 		while parent_stack[-1].parent is not None:
@@ -3120,7 +3129,7 @@ class Chunk:
 		child_parent_stacks = [[possible_child] for possible_child in hypothetical_neighbors]
 		matching_ancestors = [None]*len(hypothetical_neighbors)
 		for stack_height in range(len(parent_stack)):
-			for hyp_i in range(1, len(hypothetical_neighbors)):
+			for hyp_i in range(len(hypothetical_neighbors)):
 				if matching_ancestors[hyp_i] is None:
 					child_parent_stacks[hyp_i].append(child_parent_stacks[hyp_i][-1].get_parent())
 					# Check if we've generated a duplicate
@@ -3145,38 +3154,24 @@ class Chunk:
 								continue
 		united_test = [ancestor == None for ancestor in matching_ancestors]
 		if np.any(united_test):
+			#TODO This should be an error, and, I don't know why it's happening. It's usually just one failed neighbor.
+			# Have to reduce its occurrence before I can actually make it error out.
+			# Hmm... it's *always* the *first* element that's a problem, and, it's because that element turns out to be a
+			# hypothetical chunk matching "self". ... No, it *is* always the first one, but after some dubious fixes,
+			# it's never matching "self"..... What could be special about the *first* element? Is it corresponding to
+			# os_blocks which tend to be listed early within the template? That just seems to give them lower values in
+			# the first 6D coordinate. Do I somehow mangle the first element at some point??
 			print("Failed to connect "+str(len(np.nonzero(united_test)[0]))+" diagonal neighbors with existing hierarchy.")
+			print(united_test)
+			print((self.template_index, self.offset))
+			print([str((chunk.template_index, chunk.offset)) for chunk in hypothetical_neighbors])
+			raise Exception("Failed to connect "+str(len(np.nonzero(united_test)[0]))+" diagonal neighbors with existing hierarchy.")
 		for stack_i in range(len(child_parent_stacks)):
 			# We want to step from large to small.
 			child_parent_stacks[stack_i].reverse()
 			# We don't need the largest hypothetical parent since we already stored its match.
 			#child_parent_stacks[stack_i] = child_parent_stacks[stack_i][1:]
 
-		# for possible_child in hypothetical_neighbors:
-		# 	child_parent_stack = [possible_child]
-		# 	united = False
-		# 	matching_ancestor = None
-		# 	while len(child_parent_stack) <= len(parent_stack) and not united:
-		# 		child_parent_stack.append(child_parent_stack[-1].get_parent())
-		# 		new_parent = child_parent_stack[-1]
-		# 		if new_parent.template_index in parent_stack_templates:
-		# 			possible_matches = [parent_stack[template_match] for template_match in
-		# 								np.nonzero(np.array(parent_stack_templates) == new_parent.template_index)[0]]
-		# 			for possible_match in possible_matches:
-		# 				if np.all(possible_match.offset == new_parent.offset):
-		# 					# We've got a match.
-		# 					united = True
-		# 					matching_ancestor = possible_match
-		# 	if not united:
-		# 		print("Found a chunk at level " + str(self.level - 1) + " which safely contained neighbor.\n"
-		# 			  + "However, failed to find a shared parent with existing hierarchy.")
-		# 		continue
-		# 	# We just need to locate the match in the existing hierarchy.
-		# 	child_parent_stack.reverse()
-		# 	# The matching ancestor (I mean, the hypothetical one) doesn't need to be on this list
-		# 	child_parent_stack = child_parent_stack[1:]
-		# 	child_parent_stacks.append(child_parent_stack)
-		# 	matching_ancestors.append(matching_ancestor)
 		lowest_matches = [chunk for chunk in matching_ancestors]
 		match_counts = [0]*len(lowest_matches)
 		print("Evaluating all neighbor parent stacks.")
@@ -3194,10 +3189,8 @@ class Chunk:
 				if len(child_parent_stacks[j]) > i:
 					possible_chunk = hypotheticals_to_find[j]
 					lowest_match = real_chunks_to_search[j]
-					#TODO Sometimes lowest_match is None??
+					# Sometimes lowest_match is None, because no ancestor got united.
 					if lowest_match is None:
-						print("Unable to merge entire parent stack while finding neighbors. Matched " + str(
-							match_counts[j]) + ".")
 						continue
 					sift_amongst = [chunk for chunk in lowest_match.get_children() if chunk is not None]
 					sifted_template = [c.template_index == possible_chunk.template_index for c in sift_amongst]
@@ -3448,14 +3441,14 @@ class Chunk:
 
 	def get_center_position(self):
 		"""
-		Returns a chunk's center's position in 3D.
+		Returns a chunk's center's position in 3D, in "level 1" coordinates.
 		:return:
 		"""
-		# TODO We can't always turn to a parent; the highest-level chunk wouldn't have one.
-		center_6D = self.network.all_blocks[self.get_parent().template_index][0][
-						self.get_parent().children.index(self)] + self.get_parent().get_offset(self.level)
+		center_6D = self.network.chunk_center_lookup(self.template_index) + self.offset
+		# center_6D = self.network.all_blocks[self.get_parent().template_index][0][
+		# 				self.get_parent().children.index(self)] + self.get_parent().get_offset(self.level)
 		# Convert to level 0
-		center_6D = self.network.custom_pow(np.array(self.network.deflation_face_axes), self.level - 1).dot(center_6D)
+		center_6D = self.network.custom_pow(np.array(self.network.deflation_face_axes), self.level).dot(center_6D)
 		return center_6D.dot(self.network.worldplane.T)
 
 	def find_triacontahedron(self):
