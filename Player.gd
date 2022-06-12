@@ -45,7 +45,7 @@ func _process(delta):
 	#interact_ray.get_collision_normal()
 	if interactable:
 		if interactable.get_parent().get_meta("originating_chunk"):
-			chunk_network.point_at_block(interactable.get_parent(), interact_ray)
+			chunk_network.point_at_block(interactable.get_parent(), interact_ray, Input.is_action_pressed('ui_place_block'))
 		
 
 func _physics_process(delta):
@@ -80,10 +80,10 @@ func _physics_process(delta):
 			velocity -= 10*camera.global_transform.basis[2]
 			input_moved = true
 	if Input.is_action_pressed("ui_page_up"):
-		velocity += 10*transform.basis[1]
+		velocity += 1*transform.basis[1]
 		input_moved = true
 	if Input.is_action_pressed("ui_page_down"):
-		velocity -= 10*transform.basis[1]
+		velocity -= 1*transform.basis[1]
 		input_moved = true
 
 	# Use two movement types to manage gravity better

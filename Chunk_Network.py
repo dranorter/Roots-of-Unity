@@ -1347,7 +1347,7 @@ class Chunk_Network(MeshInstance):
 		translation = np.array([transform.origin.x, transform.origin.y, transform.origin.z])
 		self.player_pos = position# - np.array([2.5, 51, -66.7])  # - translation
 
-	def point_at_block(self, mesh_instance, interact_ray):
+	def point_at_block(self, mesh_instance, interact_ray, block_place):
 		"""
 		Starting with collision information (in interact_ray) and the chunk that generated the collision (delivered
 		as the mesh_instance created by that chunk), find a targeted block and draw an indicator around it.
@@ -1395,6 +1395,9 @@ class Chunk_Network(MeshInstance):
 			second_point = collision_point + collision_normal
 			self.block_highlight.add_vertex(Vector3(second_point[0], second_point[1], second_point[2]))
 			self.block_highlight.end()
+
+			if block_place:
+				target.fill()
 
 
 
@@ -4002,6 +4005,14 @@ class Chunk:
 		# self.network.block_highlight.add_vertex(face_origin)
 		# self.network.block_highlight.end()
 
+	def fill(self):
+		"""
+		Fill the block and cause world mesh to update.
+		:return:
+		"""
+		self.get_parent().block_values[self.index_in_parent] = 1
+		self.get_parent().draw_mesh()
+
 	def draw_mesh(self, drawp=lambda x: True):
 		"""
 		Creates a mesh consisting of the chunk's children (ie, blocks, if the chunk is level 1); then adds that mesh
@@ -4133,9 +4144,8 @@ class Chunk:
 		new_mi = MeshInstance.new()
 		new_mi.mesh = new_mesh
 		new_mesh.surface_set_material(new_mesh.get_surface_count() - 1, COLOR)
+		
 
-		# We need to be able to delete the MI when we're unloaded
-		self.mi = new_mi
 		# The MI needs to be able to tell us about collisions
 
 		new_mi.set_meta("originating_chunk", GDString(str(id(self))))
@@ -4154,8 +4164,11 @@ class Chunk:
 
 		add_collider = time.perf_counter()
 
+		# If there was an old mesh, delete it
+		if self.mesh is not None:
+			self.network.remove_child(self.mesh)
+			self.mesh.free()
 		self.mesh = new_mi
-		self.collision_mesh = body
 		final_time = time.perf_counter()
 	# print("\nPreliminaries:     "+str(preliminaries - starttime))
 	# print("Build draw list:   "+str(build_draw_list - preliminaries))
