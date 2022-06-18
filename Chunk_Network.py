@@ -137,21 +137,21 @@ class Chunk_Network(MeshInstance):
 		"""
 		exponent_increment = safe_amount
 		remaining_levels = power
-		product = np.eye(len(matrix), dtype=int)
+		product = np.eye(len(matrix), dtype='int64')
 		trustworthy_portion = np.array(
-			np.round(np.linalg.inv(np.linalg.matrix_power(np.array(matrix, dtype=int), exponent_increment))), dtype=int)
+			np.round(np.linalg.inv(np.linalg.matrix_power(np.array(matrix, dtype='int64'), exponent_increment))), dtype='int64')
 		while remaining_levels < -exponent_increment:
-			product = np.array(np.round(product.dot(trustworthy_portion)), dtype=int)
+			product = np.array(np.round(product.dot(trustworthy_portion)), dtype='int64')
 			remaining_levels += exponent_increment
 		trustworthy_portion = np.array(
-			np.round(np.linalg.matrix_power(np.array(matrix, dtype=int), exponent_increment)), dtype=int)
+			np.round(np.linalg.matrix_power(np.array(matrix, dtype='int64'), exponent_increment)), dtype='int64')
 		while remaining_levels > exponent_increment:
-			product = np.array(np.round(product.dot(trustworthy_portion)), dtype=int)
+			product = np.array(np.round(product.dot(trustworthy_portion)), dtype='int64')
 			remaining_levels -= exponent_increment
-		remaining_part = np.linalg.matrix_power(np.array(matrix, dtype=int), abs(remaining_levels))
+		remaining_part = np.linalg.matrix_power(np.array(matrix, dtype='int64'), abs(remaining_levels))
 		if remaining_levels < 0:
-			remaining_part = np.array(np.round(np.linalg.inv(remaining_part)), dtype=int)
-		return np.array(np.round(product.dot(remaining_part)), dtype=int)
+			remaining_part = np.array(np.round(np.linalg.inv(remaining_part)), dtype='int64')
+		return np.array(np.round(product.dot(remaining_part)), dtype='int64')
 
 	def chunk_center_lookup(self, template_index):
 		"""
@@ -973,6 +973,10 @@ class Chunk_Network(MeshInstance):
 		# The two are added together due to a hidden -1 multiplication as offset gets raised an extra level
 		# chunk_axes_inv_seed_3 = level_sign * self.phipow(3 * level) * self.get_seed() + self.phipow(3) * np.array(offset,
 		# 																								  dtype='int64')  # .dot(self.squarallel)
+		# TODO The below is about as direct as we might hope for, but, we're taking offset (which might be a huge
+		#  integer) and converting it to a float. Only way around this I've thought of: each new highest-level chunk is
+		#  considered a new origin for the sake of offsets that level and above. This significantly complicates offset
+		#  calculations but keeps them about the same size on each level.
 		chunk_axes_inv_seed = self.get_seed(level+1) + self.phipow(3)*np.array(offset,dtype='int64').dot(self.squarallel)
 
 		print("Calculating seed from safe point " + str(lowered_offset))
@@ -1040,10 +1044,13 @@ class Chunk_Network(MeshInstance):
 		# chunk_center and offset are already in terms of the scale one level
 		# down.
 		chunk_as_block_center = np.round(
-			(np.linalg.inv(self.deflation_face_axes)).dot(chosen_center + offset) * 2) / 2.0
-		chunk_as_block_origin = np.round(np.linalg.inv(self.deflation_face_axes).dot(offset))
+			(np.array(np.round(np.linalg.inv(self.deflation_face_axes)),dtype='int64').dot(
+				np.array(np.round(chosen_center*2),dtype='int64') + offset*2))) / 2.0
+		# Inverse deflation face axes are integer, we just need to make the dtype right to preserve our data.
+		# Oof... this goes badly wrong if we don't round it first.
+		chunk_as_block_origin = np.array(np.round(np.linalg.inv(self.deflation_face_axes)),dtype='int64').dot(offset)
 		print("Rescaled chunk center: " + str(chunk_as_block_center))
-		print("Rescaled chunk origin: " + str(np.linalg.inv(self.deflation_face_axes).dot(offset)))
+		print("Rescaled chunk origin: " + str(chunk_as_block_origin))
 
 		# By using the constraint lookup tree, we can make parent generation much faster: 20 parents generate in 0.28
 		# seconds rather than 19.8 seconds.
@@ -1385,7 +1392,16 @@ class Chunk_Network(MeshInstance):
 		if pointed_chunk.level == 0:
 			pointed_at = pointed_chunk
 
-		neighbors = [chunk for chunk in pointed_at.get_diag_neighbors(generate=True) if chunk is not None]
+		#TODO This is the main source of slowness right now. What needs to happen is:
+		# - Refactor the core of get_diag_neighbors into a function which takes a list of block offsets, or maybe a list
+		#   of hypothetical chunks, and finds the real chunks they correspond to. Such a function can be called in both
+		#   get_neighbors and get_diag_neighbors (until I find a better way to do those things). But more to the point,
+		#   what we can do here with point_at_block is use the 3D shape of Chunk.neighbors, and try to figure out which
+		#   neighbor we actually need. If the neighbor is None, we can deduce its center from the list in
+		#   Chunk.neighbor_centers. Then, we can call essentially the get_diag_neighbors algorithm, but on just one
+		#   offset, which will be perhaps 20 to 30 times faster.
+		# - Avoid calling this every frame. Find a quick way to determine if we're pointing at the same face. (low priority)
+		neighbors = [chunk for chunk in pointed_at.get_neighbors(generate=True).flatten() if chunk is not None]
 		target = neighbors[0]
 		for chunk in neighbors:
 			if chunk.rhomb_contains_point(collision_point) > -0.1:
@@ -1482,13 +1498,24 @@ class Chunk_Network(MeshInstance):
 		# dropoff in detail after the sphere is exited is too harsh. Ideally what we want is for parts of the world
 		# which the player can actually see to become more detailed, without too much switching back and forth as to
 		# what is and isn't loaded, and with fairly even coverage.
+		# ... This is me many months later, re-reading the above. We could choose some big-enough chunks, call it the
+		# "level on watch". On the level on watch, keep the chunk loaded where the player is found, along with all its
+		# diagonal neighbors. The level below this is the "load/unload level". All loaded "level on watch" chunks'
+		# children are part of the "load/unload level", and are being constantly compared with the player's position,
+		# so that high-priority chunks (where the player is looking or walking towards for example) can be loaded. When
+		# things are going exceptionally well resources-wise, the level on watch can be raised by one; or when things
+		# are bogged down, it could even be lowered. But that's a very coarse adjustment to the scale of what's being
+		# loaded and unloaded.
 		if r.random() < 0.95:
 			return
-		# For now, we use a loading radius, which cautiously expands.#np.concatenate([self.all_blocks[t_i][1],
+		# For now, we use a loading radius, which cautiously expands.
+		# #np.concatenate([self.all_blocks[t_i][1],
 		#                       #[self.all_blocks[t_i][0][block_i] for block_i in range(len(self.all_blocks[t_i][0]))
 		#                       # if block_i in to_skip]])
 		#                                         )
-
+		#TODO We can make this location search much faster whenever the player is colliding with terrain, by having
+		# that terrain form the starting point of the search. Or really, since we just need a close enough location
+		# for chunk loading purposes, the terrain collision would give us everything we need.
 		if self.player_guess is None or len(self.player_guess) == 0:
 			self.player_guess = [self.highest_chunk]
 		random.shuffle(self.player_guess)
@@ -1942,6 +1969,13 @@ class Chunk_Network(MeshInstance):
 			[is_blocklist_alignment_lookup[1][i] for i in
 			 range(is_blocklist_alignment_lookup[1].shape[0]) if is_blocklist_alignment_lookup[0][i] == alignment]
 			for alignment in range(20)]
+		# TODO Other things I could precompute (but, not sure how much benefit this could be):
+		#  - Chunkscaled block coords.
+		#  - Floor of block coords (block origins)
+		#  - Differences between floors and the original numbers
+		#  - The "unique origins" lookup table produced in generate_children
+		#  - Block origins dotted with self.squarallel, which is what gets used when translating seeds
+		#  - Basically anything else which gets used anywhere
 
 
 		# Now that constraints have considerably less points, we probably need considerably less of them.
@@ -2136,6 +2170,32 @@ class Chunk_Network(MeshInstance):
 		print("Current seed:")
 		print(self.get_seed())
 
+		# Trying out a seed tower idea
+		# TODO If I want to push chunk generation higher, keeping a tower like this seems like the only way. Offsets can
+		#  be stored as int64, but I inevitably have to multiply them by a floating point (well, golden field) matrix,
+		#  particularly when I project them to the worldplane to do seed translation. I could write a custom projection
+		#  function, but I think the potential benefit is limited. Ultimately, the 64 bit integer would overflow at
+		#  around level 28. Now, level 28 is plenty, and I'd pursue the "custom projection function" direction if I had
+		#  more confidence in it; but one issue with it is that I'd be inserting a slow function anywhere we want to
+		#  translate seeds around.
+		#  The seed tower idea, on the other hand: consider each new top-level chunk to be the origin of all offsets on
+		#  that level. This should keep offsets extremely small. The added complexity is that converting offsets (and
+		#  other coordinates, like chunk centers) from one level to another becomes complex, and needs to be encapsulated.
+		#  Offset conversion functions would have to be called from all the same places a custom projection function
+		#  would be, but the complexity gain isn't comparable -- just a matter of adding up all offsets from levels that
+		#  are going to be traversed in a given translation.
+		# self.stacked_seeds = [self.original_seed]
+		# self.stacked_seeds_offsets = [self.highest_chunk.offset]
+		# while self.highest_chunk.level < 25:
+		# 	self.highest_chunk.get_parent()
+		# 	self.stacked_seeds.append(self.highest_chunk.seed)
+		# 	self.stacked_seeds_offsets.append(self.highest_chunk.offset)
+		# print(self.stacked_seeds)
+		# print(self.stacked_seeds_offsets)
+		# for i in range(len(self.stacked_seeds)):
+		# 	print(self.custom_pow(self.deflation_face_axes,i).dot(self.stacked_seeds_offsets[i]).dot(self.squarallel)
+		# 		  + pow(-1,i) * self.phipow(-3*i) * self.stacked_seeds[i])
+
 		# hits = self.generate_parents(chunk_num, [0, 0, 0, 0, 0, 0])
 		print("getting superchunk")
 		self.highest_chunk.get_parent()
@@ -2271,8 +2331,9 @@ class Chunk_Network(MeshInstance):
 		self.add_child(self.block_highlight, "BlockHighlight")
 
 		# test_2 = time.perf_counter()
-		# for i in range(7):
+		# while self.highest_chunk.level < 14:
 		# 	self.highest_chunk = self.highest_chunk.get_parent()
+		# self.highest_chunk.get_children()
 		# print(time.perf_counter() - test_2)
 
 	# if len(children) > 0:
@@ -2623,7 +2684,7 @@ class Chunk:
 		self.is_topmost = False
 		self.network = network
 		self.template_index = template_index
-		self.offset = np.array(offset)
+		self.offset = np.array(offset,dtype='int64')
 		self.level = level
 		self.hypothetical=hypothetical
 		# TODO Easy to forget whether self.blocks holds straight template coords or coords with offset. Make the
@@ -2639,7 +2700,7 @@ class Chunk:
 		self.neighbors = np.array([[[None]*3]*3]*3)
 		self.neighbors[1][1][1] = self
 		self.neighbors_found = False
-		self.diag_neighbors = []
+		self.diag_neighbors = [self]
 		self.diag_neighbors_found = False
 		self.parent = None
 		self.children = [None] * len(self.blocks)
@@ -2666,21 +2727,21 @@ class Chunk:
 			#  - I should still make more utility functions; e.g., something for getting block axes and converting
 			#    arbitrary points between chunk level coords.
 			chunk_as_block_center = np.round(
-				(np.linalg.inv(self.network.deflation_face_axes)).dot(
-					self.network.chunk_center_lookup(self.template_index)
-					+ self.offset - self.parent.get_offset(self.level - 1)) * 2) / 2.0
+				np.array(np.round(np.linalg.inv(self.network.deflation_face_axes)),dtype='int64').dot(
+					np.array(np.round(2*self.network.chunk_center_lookup(self.template_index)),dtype='int64')
+					+ 2*self.offset - 2*np.array(np.round(self.parent.get_offset(self.level - 1)),dtype='int64'))) / 2.0
 			for i in range(len(self.parent.blocks)):
 				if np.all(chunk_as_block_center == self.parent.blocks[i]):
 					self.parent.children[i] = self
 					self.index_in_parent = i
 					break
-			self.neighbor_centers = self.parent.neighbors_outside_chunk[self.index_in_parent] + self.parent.offset
-			self.diag_neighbor_centers = self.parent.diag_neighbors_outside_chunk[self.index_in_parent] + self.parent.offset
 			# TODO Convert into a test
 			print("Did block end up parent's child? " + str(self in self.parent.children))
 			# There used to be a big block of contingencies here, for trying to repair the tree if the above line
 			# turned out false. None of it ever worked though, and I'm not having that problem anymore. If the code
 			# is of any interest: it can be found in commits from before June 15th, 2022.
+			self.neighbor_centers = self.parent.neighbors_outside_chunk[self.index_in_parent] + self.parent.offset
+			self.diag_neighbor_centers = self.parent.diag_neighbors_outside_chunk[self.index_in_parent] + self.parent.offset
 			if self.is_topmost:
 				print("Adding new top chunk of level " + str(self.level + 1))
 				self.is_topmost = False
@@ -3147,69 +3208,106 @@ class Chunk:
 		#hypothetical_neighbors = [chunk.get_parent() for chunk in possible_os_chunks]
 		if len(self.diag_neighbor_centers) == 0:
 			return self.diag_neighbors
-		#TODO Strange error on below line: "only size-1 arrays can be converted to Python scalars."
+		# Check which neighbors we already know.
+		unknown_neighbor_indices = []
 		diag_neighbor_offsets = np.floor(self.diag_neighbor_centers)
 		diag_neighbor_offsets_scaled = np.array(self.network.deflation_face_axes,dtype='int64').dot(diag_neighbor_offsets.T).T
-		translated_seeds = self.network.get_seed(self.level) - diag_neighbor_offsets_scaled.dot(self.network.squarallel)
-		diag_neighbor_templates = []
-		for neighbor_i in range(len(self.diag_neighbor_centers)):
-			hits = self.network.find_satisfied(translated_seeds[neighbor_i])
-			centers = np.array([self.network.chunk_center_lookup(index) for index in hits])
-			index_in_hits = np.nonzero(np.all((centers + self.diag_neighbor_centers[neighbor_i])
-																  - np.round(
-				centers + self.diag_neighbor_centers[neighbor_i]) != 0, axis=1))[0][0]
-			diag_neighbor_templates.append(hits[index_in_hits])
-		hypothetical_neighbors = [Chunk(self.network,diag_neighbor_templates[i],diag_neighbor_offsets_scaled[i],self.level,hypothetical=True)
-								  for i in range(len(self.diag_neighbor_centers))]
-
-		def cleanup(hypothetical_neighbors=hypothetical_neighbors):
-			for chunk in hypothetical_neighbors:
-				del chunk
-			del hypothetical_neighbors
-
-		hypothetical_neighbors_unique = []
-		hypothetical_neighbors_unique_strings = []
-		# Need to filter out the inevitable duplicates
-		for chunk in hypothetical_neighbors:
-			chunk_string = str((chunk.template_index, chunk.offset))
-			if chunk_string not in hypothetical_neighbors_unique_strings:
-				hypothetical_neighbors_unique_strings.append(chunk_string)
-				hypothetical_neighbors_unique.append(chunk)
-		to_cleanup = []
-		for i in range(len(hypothetical_neighbors)):
-			if hypothetical_neighbors[i] not in hypothetical_neighbors_unique:
-				to_cleanup.append(hypothetical_neighbors[i])
-		print("Cleaning up "+str(len(to_cleanup))+" duplicate neighbors.")
-		cleanup(to_cleanup)
-		del hypothetical_neighbors
-		hypothetical_neighbors = hypothetical_neighbors_unique
-		print(str(len(hypothetical_neighbors))+" remain.")
-		if len(hypothetical_neighbors) == 0:
+		found_neighbor_offsets = np.array([chunk.offset for chunk in self.diag_neighbors if chunk is not None])
+		for center_i in range(len(self.diag_neighbor_centers)):
+			known_index = np.nonzero(np.all((diag_neighbor_offsets_scaled[center_i] - found_neighbor_offsets) == 0,axis=1))[0]
+			if len(known_index) == 0:
+				unknown_neighbor_indices.append(center_i)
+		unknown_neighbor_centers = self.diag_neighbor_centers[unknown_neighbor_indices]
+		if len(unknown_neighbor_centers) == 0:
 			self.diag_neighbors_found = True
 			return(self.diag_neighbors)
+		diag_neighbors = self.find_chunks_from_blockscale_centers(unknown_neighbor_centers, self.level)
+		print("\n\nAdded "+str(len(diag_neighbors))+" neighbors.\n\n")
+		for chunk in diag_neighbors:
+			if chunk not in self.diag_neighbors:
+				self.diag_neighbors.append(chunk)
+		if len(self.diag_neighbors) == 0:
+			print("Something went wrong finding neighbors... got none??")
+			print(diag_neighbors)
+		self.diag_neighbors_found = True
+		return self.diag_neighbors
+
+	def find_chunks_from_blockscale_centers(self, unknown_centers, level):
+		"""
+		Generative chunk search, optimized to find several chunks which are clustered together, given known center
+		 coordinates, like those provided by Chunk.neighbor_offsets.
+		:param unknown_centers: "blockscale" centers of chunks to be found. IE, presented on the scale in which the
+		 chunks to be found are just one unit across.
+		:param level: Level of chunks that are to be found.
+		:return: A list of chunks, corresponding to the unknown_centers, if they are valid with the current seed.
+		"""
+		unknown_offsets = np.floor(unknown_centers)
+		unknown_offsets_scaled = np.array(self.network.deflation_face_axes, dtype='int64').dot(unknown_offsets.T).T
+		translated_seeds = self.network.get_seed(self.level) - unknown_offsets_scaled.dot(self.network.squarallel)
+		unknown_templates = []
+		for unknown_i in range(len(unknown_centers)):
+			hits = self.network.find_satisfied(translated_seeds[unknown_i])
+			centers = np.array([self.network.chunk_center_lookup(index) for index in hits])
+			index_in_hits = np.nonzero(np.all((centers + unknown_centers[unknown_i])
+											  - np.round(
+				centers + unknown_centers[unknown_i]) != 0, axis=1))[0][0]
+			unknown_templates.append(hits[index_in_hits])
+
+		# TODO I could switch to manipulating (index, offset) pairs instead of hypothetical chunks.
+		hypothetical_blocks = [Chunk(self.network, unknown_templates[i], unknown_offsets_scaled[i], self.level, hypothetical=True)
+							   for i in range(len(unknown_centers))]
+
+		def cleanup(hypothetical_blocks=hypothetical_blocks):
+			for chunk in hypothetical_blocks:
+				del chunk
+			del hypothetical_blocks
+
+		hypothetical_blocks_unique = []
+		hypothetical_blocks_unique_strings = []
+		# Need to filter out the inevitable duplicates
+		for chunk in hypothetical_blocks:
+			chunk_string = str((chunk.template_index, chunk.offset))
+			if chunk_string not in hypothetical_blocks_unique_strings:
+				hypothetical_blocks_unique_strings.append(chunk_string)
+				hypothetical_blocks_unique.append(chunk)
+		to_cleanup = []
+		for i in range(len(hypothetical_blocks)):
+			if hypothetical_blocks[i] not in hypothetical_blocks_unique:
+				to_cleanup.append(hypothetical_blocks[i])
+		cleanup(to_cleanup)
+		del hypothetical_blocks
+		hypothetical_blocks = hypothetical_blocks_unique
 
 		parent_stack = [self]
 		while parent_stack[-1].parent is not None:
 			parent_stack.append(parent_stack[-1].parent)
 		parent_stack_templates = [p.template_index for p in parent_stack]
 
-		parent_safely_contains_check = [[c.safely_contains_point(target.get_center_position()) for c in parent_stack] for target in hypothetical_neighbors]
+		parent_safely_contains_check = [[c.safely_contains_point(target.get_center_position()) for c in parent_stack] for target in hypothetical_blocks]
 
 		while not np.all(np.any(parent_safely_contains_check,axis=1)):
-			print("Highest parent does not safely contain a block neighbor;")
+			print("Highest parent does not safely contain target block.")
 			parent_stack.append(parent_stack[-1].get_parent())
 			print("Added new parent, testing again.")
 			parent_safely_contains_check = [[c.safely_contains_point(target.get_center_position()) for c in parent_stack] for target in
-											hypothetical_neighbors]
+											hypothetical_blocks]
 
-		#TODO Below has a lot of duplication of effort.
-		child_parent_stacks = [[possible_child] for possible_child in hypothetical_neighbors]
-		matching_ancestors = [None]*len(hypothetical_neighbors)
+		# Make child_parent_stacks each higher until they meet parent_stack somewhere.
+		# A more idealistic version of this algorithm might try to make each child_parent_stack higher until it collides
+		#  with the real chunk tree *anywhere*. But I think focusing on parent_stack is a good compromise.
+		child_parent_stacks = [[possible_child] for possible_child in hypothetical_blocks]
+		matching_ancestors = [None]*len(hypothetical_blocks)
 		for stack_height in range(len(parent_stack)):
-			for hyp_i in range(len(hypothetical_neighbors)):
+			for hyp_i in range(len(hypothetical_blocks)):
 				if matching_ancestors[hyp_i] is None:
 					child_parent_stacks[hyp_i].append(child_parent_stacks[hyp_i][-1].get_parent())
 					# Check if we've generated a duplicate
+					# (We usually will generate a duplicate. However, how would we avoid this? If we call
+					# generate_parent to get an offset and template index for comparison, we may as well call get_parent.
+					# TODO The more practical option would be to look though parents already generated at this level, and
+					#  see if their children (checked within their templates, not generate_children) are a match for
+					#  child_parent_stacks[hyp_i]. But at that point we're making lots of subtractions to check; would
+					#  it be worth it?
 					for hyp_j in range(hyp_i):
 						if len(child_parent_stacks[hyp_j]) == len(child_parent_stacks[hyp_i]):
 							if child_parent_stacks[hyp_i][-1].template_index == child_parent_stacks[hyp_j][-1].template_index:
@@ -3231,27 +3329,24 @@ class Chunk:
 								continue
 		united_test = [ancestor == None for ancestor in matching_ancestors]
 		if np.any(united_test):
-			#TODO This should be an error, and, I don't know why it's happening. It's usually just one failed neighbor.
-			# Have to reduce its occurrence before I can actually make it error out.
-			# Hmm... it's *always* the *first* element that's a problem, and, it's because that element turns out to be a
-			# hypothetical chunk matching "self". ... No, it *is* always the first one, but after some dubious fixes,
-			# it's never matching "self"..... What could be special about the *first* element? Is it corresponding to
-			# os_blocks which tend to be listed early within the template? That just seems to give them lower values in
-			# the first 6D coordinate. Do I somehow mangle the first element at some point??
-			print("Failed to connect "+str(len(np.nonzero(united_test)[0]))+" diagonal neighbors with existing hierarchy.")
+			# This originally was happening because, indexing a loop incorrectly, I was always skipping just 1 chunk.
+			print("Failed to connect "+str(len(np.nonzero(united_test)[0]))+" sought offsets with existing hierarchy.")
 			print(united_test)
 			print((self.template_index, self.offset))
-			print([str((chunk.template_index, chunk.offset)) for chunk in hypothetical_neighbors])
-			raise Exception("Failed to connect "+str(len(np.nonzero(united_test)[0]))+" diagonal neighbors with existing hierarchy.")
+			print([str((chunk.template_index, chunk.offset)) for chunk in hypothetical_blocks])
+			raise Exception("Failed to connect "+str(len(np.nonzero(united_test)[0]))+" sought offsets with existing hierarchy.")
 		for stack_i in range(len(child_parent_stacks)):
 			# We want to step from large to small.
 			child_parent_stacks[stack_i].reverse()
 			# We don't need the largest hypothetical parent since we already stored its match.
 			#child_parent_stacks[stack_i] = child_parent_stacks[stack_i][1:]
 
+		# TODO At this point, everything's getting hookep up every time here. I could switch to an approach where I
+		#  don't call get_children, and instead, when a matching child doesn't already exist, I could have the lowest
+		#  match adopt the remaining stack of hypothetical chunks.
 		lowest_matches = [chunk for chunk in matching_ancestors]
 		match_counts = [0]*len(lowest_matches)
-		print("Evaluating all neighbor parent stacks.")
+		print("Chunk center search: evaluating all parent stacks.")
 		# We start at 1, since we don't need the largest hypothetical parent -- we already stored its match.
 		for i in range(1,max([len(stack) for stack in child_parent_stacks])):
 			# We'll ignore stacks that are over with already, but include them for ease of indexing.
@@ -3273,25 +3368,19 @@ class Chunk:
 					sifted_template = [c.template_index == possible_chunk.template_index for c in sift_amongst]
 					sifted_offset = [np.all(c.offset == possible_chunk.offset) for c in sift_amongst]
 					if not np.any(sifted_template) or not np.any(sifted_offset):
-						print("Unable to merge entire parent stack while finding neighbors. Matched " + str(match_counts[j]) + ".")
+						print("Unable to merge entire parent stack while finding chunk by center. Matched " + str(match_counts[j]) + ".")
 						continue
 					# We've got a match
 					lowest_matches[j] = sift_amongst[np.nonzero(np.array(sifted_template) * np.array(sifted_offset))[0][0]]
 					match_counts[j] += 1
-		for neighbor_i in range(len(match_counts)):
-			if match_counts[neighbor_i] == len(child_parent_stacks[neighbor_i]):
-				if lowest_matches[neighbor_i] not in self.diag_neighbors:
-					self.diag_neighbors.append(lowest_matches[neighbor_i])
-		self.diag_neighbors_found = True
-
-		if len(self.diag_neighbors) == 0:
-			print("Something went wrong finding neighbors... got none??")
-			print(match_counts)
-			print([len(stack) for stack in child_parent_stacks])
+		chunks_located = []
+		for match_i in range(len(match_counts)):
+			if match_counts[match_i] == len(child_parent_stacks[match_i]):
+				chunks_located.append(lowest_matches[match_i])
 		cleanup()
 		for stack in child_parent_stacks:
 			cleanup(stack)
-		return self.diag_neighbors
+		return chunks_located
 
 	def _diag_neighbors_complete(self):
 		"""
@@ -3321,140 +3410,38 @@ class Chunk:
 		and positions with just one nonzero coordinate will hold a neighbor. Neighbors with opposite coordinates within
 		the array will be on opposite sides of the chunk.
 		"""
-		print("Got a request for all neighbors.")
-		if self.neighbors_found:
-			print("All neighbors already known.")
+		if self.neighbors_found or not generate:
 			return self.neighbors
-		if not generate:
-			print("No generation allowed, so returning what neighbors are known.")
+		# Check for existing neighbors
+		self.get_parent()
+		if len(self.neighbor_centers) == 0:
 			return self.neighbors
-		print("Not all neighbors readily available.")
-		print("Currently know "+str(len(np.nonzero(self.neighbors)[0])))
-		if len(np.nonzero(self.neighbors)[0]) == 7:
-			print("Neighbors got hooked up but somehow not marked as found.")
+		# Check which neighbors we already know.
+		unknown_neighbor_indices = []
+		neighbor_offsets = np.floor(self.neighbor_centers)
+		neighbor_offsets_scaled = np.array(self.network.deflation_face_axes,dtype='int64').dot(neighbor_offsets.T).T
+		found_neighbor_offsets = np.array([chunk.offset for chunk in self.neighbors.flatten() if chunk is not None])
+		for center_i in range(len(self.neighbor_centers)):
+			known_index = np.nonzero(np.all((neighbor_offsets_scaled[center_i] - found_neighbor_offsets) == 0,axis=1))[0]
+			if len(known_index) == 0:
+				unknown_neighbor_indices.append(center_i)
+		unknown_neighbor_centers = self.neighbor_centers[unknown_neighbor_indices]
+		if len(unknown_neighbor_centers) == 0:
 			self.neighbors_found = True
-			return self.neighbors
-		print("Getting parent... ")
-		parent = self.get_parent()
-		siblings = parent.get_children()
-		# This forces some generation, so we might have all neighbors now
-		if self.neighbors_found:
-			print("ah, neighbors got hooked up.")
-			return self.neighbors
-		if len(np.nonzero(self.neighbors)[0]) == 7:
-			# TODO Eventually turn this into an error
-			print("Neighbors got hooked up but somehow not marked as found.")
+			return(self.neighbors)
+		neighbors = self.find_chunks_from_blockscale_centers(unknown_neighbor_centers, self.level)
+		print("\n\nAdded "+str(len(neighbors))+" neighbors.\n\n")
+		# We'll depend on get_children() to put the neighbors in the right spot in the neighbors array...
+		# for chunk in neighbors:
+		# 	if chunk not in self.neighbors.flatten():
+		# 		self.neighbors.append(chunk)
+		if len([chunk for chunk in self.neighbors.flatten() if chunk is not None]) != 7:
+			print("Something went wrong finding neighbors... got "
+				  +str(len([chunk for chunk in self.neighbors.flatten() if chunk is not None])))
+			print(neighbors)
+		else:
 			self.neighbors_found = True
-			return self.neighbors
-		# TODO The below check for number of neighbors sometimes comes back 0. This seems incorrect! Do I have templates
-		#  with floating blocks?
-		print("Should have this many neighbors within parent:")
-		print(len(np.nonzero(parent.blocks_neighbor[self.index_in_parent])[0]))
-		# OK, we must be on the edge of our parent chunk. Before resorting to upwards recursion, we generate what we can
-		# of parent's neighbors
-		parent_neighbors = parent.neighbors
-		parent_neighbors = [x for x in parent_neighbors.flatten() if x is not None and x is not parent]
-		for neighbor in parent_neighbors:
-			# force generation
-			neighbor.get_children()
-			if self.neighbors_found:
-				return self.neighbors
-		if len(np.nonzero(self.neighbors)[0]) == 7:
-			self.neighbors_found = True
-			return self.neighbors
-		print("We're on the edge of a chunk, and need to recurse upwards...")
-		# It's important not to just do pure recursion here. For awhile I had myself convinced that it was OK, so I'm
-		# going to give detailed reasoning.
-		# Suppose the parent decides to create a grandparent in order to find its neighbors. This might find 5 of the 6
-		# neighbors if the parent is on the edge of the grandparent. (Most chunks are on the edge of their parent.)
-		# More often than not, the current chunk's missing neighbor will be within one of the 5 'uncles' thus found.
-		# However, the parent doesn't check in, since it has simply been asked to generate all its neighbors; so it
-		# unnecessarily creates a great-grandparent as well. The cycle only ends when we get lucky and some chunk is
-		# on the interior of its parent - usually (at the moment) the game reaches level 12 or 13 and has an exception
-		# due to floating point error instead.
-		# To prevent this unnecessarily deep recursion, we need to limit the search to a certain range. For each
-		# missing neighbor, we know one of its coordinates, and we know four other coordinates will be the same as
-		# ours. The final coordinate could differ from ours by +0.5 or -0.5. This gives 10 possible coordinate values.
-		# If a parent together with its existing neighbors already covers all those points (in 3D projection), there is
-		# no need to look further.
-		# TODO Implement a search for a specific neighbor, using these possible coordinate points.
-		# TODO But since a new parent chunk might cover just a few of the possibilities, we also need to incrementally
-		#       check in with the original get_neighbors call throughout the search process.
-
-		# Determine possible coord values for missing neighbors
-		#   Get dims along which chunk extends
-		#   Generate the 6 face-centers
-		#   For each face-center:
-		#     Check for known neighbor on this face; if present, remove.
-		#     If none, generate possible neighbor centers:
-		#       - Same value as face-center has along the axis extending through our center and the face center
-		#       - Same value as face-center along the two dim.s on which the face extends
-		#       - Different from face-center by 0.5 along one of the three remaining dim.s
-		#           The direction of the difference is determined by the Conway worm.
-		#           This can be checked by projecting to 3D, taking a normal vector of the face, and checking whether
-		#           the dimension in question goes out of the face or into it. If that's too much, just add both.
-		# Record number of known neighbors
-		# searcher = parent
-		# while unknown neighbors remain:
-		#   searcher = searcher.get_parent()
-		#
-
-		# I could build an elaborate system, but the only thing that could possibly be minimized is how many parents
-		# deep the recursive call goes. Simpler to try and avoid recursive calls entirely, and just generate in
-		# additional parents until the current chunk's neighbors come into existence.
-		ancestry = [parent]
-		print("Last attempt to not recurse.")
-		while not self.neighbors_found:
-			print("Neighbor search at level "+str(ancestry[-1].level))
-			ancestry.append(ancestry[-1].get_parent())
-			new_children = []
-			# Descend through ancestors
-			for ancestor in [ancestry[-n] for n in range(1, len(ancestry))]:
-				# Generate all children of currently existing neighbors
-				for chk in ancestor.neighbors.flatten():
-					if chk is not None:
-						new_children = new_children + chk.get_children()
-			print("Generating all children from level "+str(ancestry[-1].level)+" to level "+str(self.level)+": ")
-			while len(new_children) > 0:
-				# There will often be many hundreds, so we print 1% of the time
-				if r.random() < 0.1:
-					print(str(len(new_children))+" remain")
-					print("template size: "+str(len(self.network.all_blocks[new_children[-1].template_index][0])))
-				new_child = new_children.pop()
-				if new_child.level > self.level:
-					temp = new_child.get_children()
-					if new_child.level > self.level + 1:
-						new_children = new_children + temp
-			print("Finished generating all children below level "+str(ancestry[-1].level))
-			# Did we get anything?
-			print("Neighbors known: "+str(len(np.nonzero(self.neighbors)[0])-1))
-			if self.neighbors_found:
-				print("ah, neighbors got hooked up.")
-				return self.neighbors
-			if len(np.nonzero(self.neighbors)[0]) == 7:
-				print("Neighbors got hooked up but somehow not marked as found.")
-				self.neighbors_found = True
-				return self.neighbors
-
-		parent_neighbors = parent.get_neighbors(generate)
-		parent_neighbors = [x for x in parent_neighbors.flatten() if x is not None and x is not parent]
-		for neighbor in parent_neighbors:
-			# force generation
-			neighbor.get_children()
-			if self.neighbors_found:
-				return self.neighbors
-		if len(np.nonzero(self.neighbors)[0]) == 7:
-			self.neighbors_found = True
-			return self.neighbors
-		# TODO This error has actually come up. It's possible some blocks reach far enough out of their chunks that
-		#  neighbors' neighbors must be considered, or even, all diagonal neighbors - IE, chunks touching parent's
-		#  vertices.
-		#  This is a bit challenging to fix, since it also means something extra has to happen in get_children(),
-		#  where all of the work of hooking up blocks with their neighbors actually happens. The most comprehensive approach
-		#  would be to actually store diagonal neighbors, and have a system mirroring the current neighbor system,
-		#  with diag_neighbors_found, get_diag_neighbors, etc.
-		raise Exception("Our neighbor does not lie in any of our parent's "+str(len(parent_neighbors))+" neighbors.")
-
+		return self.neighbors
 
 	def get_existing_children(self):
 		"""
